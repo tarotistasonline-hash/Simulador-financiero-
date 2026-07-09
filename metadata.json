@@ -1,0 +1,6 @@
+{
+  "name": "Invert-Play AR",
+  "description": "Plataforma interactiva para explorar, simular y optimizar inversiones en Argentina (CEDEARs, Dólar MEP, Plazo Fijo, FCI y más) con un Asesor Financiero Inteligente.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
