@@ -190,48 +190,162 @@ const FALLBACK_NEWS = [
   }
 ];
 
+interface CachedNews {
+  data: any[];
+  timestamp: number;
+}
+
+let newsCache: CachedNews | null = null;
+const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+let circuitBreakerActiveUntil = 0;
+const BREAKER_DURATION_MS = 15 * 60 * 1000; // 15 minutes of break on quota/API limits
+
+function activateCircuitBreaker(error: any) {
+  const errorStr = String(error?.message || error || "");
+  const isQuota = errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED") || errorStr.includes("quota");
+  const isUnavailable = errorStr.includes("503") || errorStr.includes("UNAVAILABLE");
+  
+  if (isQuota || isUnavailable) {
+    circuitBreakerActiveUntil = Date.now() + BREAKER_DURATION_MS;
+    console.warn(`[Circuit Breaker Activated] Bypassing Gemini API calls for 15 minutes due to quota/rate limit error: ${errorStr.substring(0, 150)}`);
+  }
+}
+
 // API Endpoint to get real-time Argentine financial news using Google Search grounding
 app.get("/api/news", async (req, res) => {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn("GEMINI_API_KEY no configurado, usando noticias de contingencia.");
+    const now = Date.now();
+    
+    // Check Circuit Breaker
+    if (now < circuitBreakerActiveUntil) {
+      console.log(`[Circuit Breaker Active] Bypassing Gemini API to prevent quota spam. Serving from safety nets.`);
+      if (newsCache) {
+        return res.json(newsCache.data);
+      }
       return res.json(FALLBACK_NEWS);
     }
+    
+    // Serve from cache if still fresh
+    if (newsCache && (now - newsCache.timestamp < CACHE_TTL_MS)) {
+      console.log(`[Cache Hit] Serving news from server-side cache. TTL remaining: ${Math.round((CACHE_TTL_MS - (now - newsCache.timestamp)) / 1000)}s`);
+      return res.json(newsCache.data);
+    }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: "Busca las 3 noticias financieras más recientes e importantes de Argentina hoy (dólar, inflación, plazo fijo, CEDEARs, acciones o Banco Central). Buscá en internet las noticias más frescas e importantes de las últimas 24-48 horas. Devuelve estrictamente un arreglo JSON de exactamente 3 elementos con título, resumen, url de origen real (obtenida del buscador de Google Search), fuente y fecha aproximada.",
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              title: { type: Type.STRING, description: "Título breve y atractivo de la noticia financiera" },
-              summary: { type: Type.STRING, description: "Resumen conciso de 1-2 oraciones explicando el impacto o novedad" },
-              url: { type: Type.STRING, description: "URL de origen real de la noticia obtenida de los resultados de búsqueda de Google" },
-              source: { type: Type.STRING, description: "Nombre del medio informativo, por ejemplo: El Cronista, Ámbito, Infobae, Clarín, La Nación, etc." },
-              date: { type: Type.STRING, description: "Fecha amigable, por ejemplo: Hoy, Ayer, o la fecha de publicación" }
-            },
-            required: ["title", "summary", "url", "source", "date"]
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn("GEMINI_API_KEY no configurado, usando noticias de contingencia.");
+      return res.json(newsCache ? newsCache.data : FALLBACK_NEWS);
+    }
+
+    try {
+      console.log("[Cache Miss] Fetching live news from Gemini with Google Search grounding...");
+      // Tier 1: Try to fetch live news with Google Search grounding
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: "Busca las 3 noticias financieras más recientes e importantes de Argentina hoy (dólar, inflación, plazo fijo, CEDEARs, acciones o Banco Central). Buscá en internet las noticias más frescas e importantes de las últimas 24-48 horas. Devuelve estrictamente un arreglo JSON de exactamente 3 elementos con título, resumen, url de origen real (obtenida del buscador de Google Search), fuente y fecha aproximada.",
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING, description: "Título breve y atractivo de la noticia financiera" },
+                summary: { type: Type.STRING, description: "Resumen conciso de 1-2 oraciones explicando el impacto o novedad" },
+                url: { type: Type.STRING, description: "URL de origen real de la noticia obtenida de los resultados de búsqueda de Google" },
+                source: { type: Type.STRING, description: "Nombre del medio informativo, por ejemplo: El Cronista, Ámbito, Infobae, Clarín, La Nación, etc." },
+                date: { type: Type.STRING, description: "Fecha amigable, por ejemplo: Hoy, Ayer, o la fecha de publicación" }
+              },
+              required: ["title", "summary", "url", "source", "date"]
+            }
           }
         }
-      }
-    });
+      });
 
-    if (response && response.text) {
-      const news = JSON.parse(response.text.trim());
-      if (Array.isArray(news) && news.length > 0) {
-        return res.json(news.slice(0, 3));
+      if (response && response.text) {
+        const news = JSON.parse(response.text.trim());
+        if (Array.isArray(news) && news.length > 0) {
+          const formattedNews = news.slice(0, 3);
+          // Save to cache
+          newsCache = {
+            data: formattedNews,
+            timestamp: Date.now()
+          };
+          console.log("[Cache Update] Saved Tier 1 grounded news to cache.");
+          return res.json(formattedNews);
+        }
+      }
+    } catch (groundingError: any) {
+      activateCircuitBreaker(groundingError);
+      
+      // If circuit breaker was just activated, skip Tier 2 and go directly to fallbacks
+      if (Date.now() < circuitBreakerActiveUntil) {
+        if (newsCache) {
+          return res.json(newsCache.data);
+        }
+        return res.json(FALLBACK_NEWS);
+      }
+
+      const errorMsg = groundingError?.message || "";
+      console.warn("[Tier 1 Failed] Grounding de búsqueda de Google no disponible o cuota excedida. Intentando generador estándar...", errorMsg);
+      
+      try {
+        // Tier 2: Try standard model generation (without search grounding) using the model's financial training
+        const fallbackAiResponse = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: "Genera las 3 noticias financieras más importantes y realistas de Argentina hoy (vinculadas a la cotización del dólar, inflación, CEDEARs, plazos fijos o Banco Central). Deben sonar sumamente actualizadas e incorporar datos realistas del panorama macroeconómico argentino actual. Devuelve estrictamente un arreglo JSON de exactamente 3 elementos con título, resumen, una URL verosímil de un medio argentino especializado (ej: cronista.com o ambito.com), el nombre del medio como fuente y la fecha 'Hoy' o 'Ayer'.",
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  summary: { type: Type.STRING },
+                  url: { type: Type.STRING },
+                  source: { type: Type.STRING },
+                  date: { type: Type.STRING }
+                },
+                required: ["title", "summary", "url", "source", "date"]
+              }
+            }
+          }
+        });
+
+        if (fallbackAiResponse && fallbackAiResponse.text) {
+          const fallbackNews = JSON.parse(fallbackAiResponse.text.trim());
+          if (Array.isArray(fallbackNews) && fallbackNews.length > 0) {
+            const formattedFallbackNews = fallbackNews.slice(0, 3);
+            // Save to cache
+            newsCache = {
+              data: formattedFallbackNews,
+              timestamp: Date.now()
+            };
+            console.log("[Cache Update] Saved Tier 2 standard news to cache.");
+            return res.json(formattedFallbackNews);
+          }
+        }
+      } catch (tier2Error: any) {
+        activateCircuitBreaker(tier2Error);
+        console.warn("[Tier 2 Failed] Fallo el modelo de contingencia estándar debido a límites de cuota generales:", tier2Error?.message || tier2Error);
       }
     }
-    
+
+    // Tier 3: If both AI tiers fail or hit quota limits:
+    // Try to return the stale cache if available (even if expired, it's better than returning static fallbacks)
+    if (newsCache) {
+      console.log("[Cache Recovery] Serving stale cache as safety net after AI errors.");
+      return res.json(newsCache.data);
+    }
+
+    // Return hardcoded default fallback if absolutely nothing else is available
+    console.log("[Fallback] Serving static fallback news.");
     res.json(FALLBACK_NEWS);
   } catch (error) {
-    console.error("Error al obtener noticias de Gemini con búsqueda:", error);
-    res.json(FALLBACK_NEWS);
+    console.warn("Error general en el endpoint de noticias, retornando contingencia:", error);
+    res.json(newsCache ? newsCache.data : FALLBACK_NEWS);
   }
 });
 

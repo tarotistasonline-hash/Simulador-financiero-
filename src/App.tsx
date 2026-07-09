@@ -233,17 +233,44 @@ export default function App() {
     }
   };
 
-  const fetchNews = async () => {
+  const fetchNews = async (forceRefresh = false) => {
     try {
       setLoadingNews(true);
+
+      if (!forceRefresh) {
+        const cached = localStorage.getItem("invertplay_news_cache");
+        const cachedTime = localStorage.getItem("invertplay_news_timestamp");
+        const now = Date.now();
+
+        if (cached && cachedTime) {
+          const age = now - parseInt(cachedTime, 10);
+          if (age < 30 * 60 * 1000) { // 30 minutes cache duration
+            setNews(JSON.parse(cached));
+            setErrorNews(null);
+            return;
+          }
+        }
+      }
+
       const res = await fetch("/api/news");
       if (!res.ok) throw new Error("No se pudieron cargar las noticias de último momento.");
       const data = await res.json();
       setNews(data);
       setErrorNews(null);
+
+      // Save to client-side localStorage
+      localStorage.setItem("invertplay_news_cache", JSON.stringify(data));
+      localStorage.setItem("invertplay_news_timestamp", Date.now().toString());
     } catch (err: any) {
       console.error(err);
-      setErrorNews("No se pudo conectar con el servidor para obtener las últimas noticias financieras.");
+      // Try to recover from local storage if network request failed due to server rate limit
+      const staleCached = localStorage.getItem("invertplay_news_cache");
+      if (staleCached) {
+        setNews(JSON.parse(staleCached));
+        setErrorNews(null);
+      } else {
+        setErrorNews("No se pudo conectar con el servidor para obtener las últimas noticias financieras.");
+      }
     } finally {
       setLoadingNews(false);
     }
@@ -1153,7 +1180,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                           </div>
                           
                           <button
-                            onClick={fetchNews}
+                            onClick={() => fetchNews(true)}
                             disabled={loadingNews}
                             className="text-xs text-zinc-400 hover:text-emerald-400 bg-zinc-950/50 hover:bg-zinc-950 border border-zinc-800 hover:border-emerald-500/30 px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 self-start sm:self-center font-bold disabled:opacity-50"
                           >
@@ -1175,7 +1202,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             <AlertTriangle className="w-6 h-6 text-amber-500" />
                             <p className="text-xs text-zinc-400">{errorNews}</p>
                             <button
-                              onClick={fetchNews}
+                              onClick={() => fetchNews(true)}
                               className="text-[10px] bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg text-white hover:bg-zinc-850 font-bold transition"
                             >
                               Intentar de nuevo
