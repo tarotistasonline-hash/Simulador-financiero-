@@ -770,7 +770,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
               <LineChart className="w-6 h-6 text-zinc-950" />
             </div>
             <div>
-              <h1 id="app-logo" className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
+              <h1 id="app-logo" translate="no" className="notranslate text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
                 Invert-Play AR
                 <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold px-1.5 py-0.5 rounded border border-emerald-500/30">
                   PESOS & DÓLARES
@@ -1113,14 +1113,14 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </button>
             <button
               onClick={() => setActiveTab("advisor")}
-              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition ${
                 activeTab === "advisor"
-                  ? "bg-emerald-500 text-zinc-950 font-bold"
-                  : "text-zinc-400 hover:text-white hover:bg-zinc-800/30"
+                  ? "bg-amber-500 text-zinc-950 font-black border border-amber-300 shadow-lg shadow-amber-500/20"
+                  : "bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/20 font-extrabold"
               }`}
             >
-              <Sparkles className="w-4 h-4 text-emerald-950 animate-pulse" />
-              Asesor AI
+              <Sparkles className={`w-4 h-4 ${activeTab === "advisor" ? "text-zinc-950" : "text-amber-400"} animate-spin`} />
+              <span className="animate-blink-gold-text uppercase tracking-widest text-[11px] font-black">Asesor IA</span>
             </button>
           </nav>
 
@@ -1663,10 +1663,10 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                           onClick={() => {
                             setActiveTab("advisor");
                           }}
-                          className="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold rounded-xl text-xs transition flex items-center justify-center gap-2"
+                          className="w-full py-3 bg-zinc-900 hover:bg-zinc-850 text-amber-400 font-extrabold rounded-xl text-xs transition flex items-center justify-center gap-2 border border-amber-500/30 shadow-md shadow-amber-500/5"
                         >
-                          <Sparkles className="w-4 h-4 text-zinc-950" />
-                          Consultar portafolio al Asesor AI
+                          <Sparkles className="w-4 h-4 text-amber-400 animate-spin" />
+                          <span className="animate-blink-gold-text font-black uppercase tracking-wider">Consultar portafolio al Asesor IA</span>
                         </button>
                       </div>
 
@@ -1905,11 +1905,11 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                     
                     <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
                       <div className="flex items-center gap-2.5">
-                        <div className="bg-emerald-500/15 p-2 rounded-xl border border-emerald-500/20">
-                          <Sparkles className="w-5 h-5 text-emerald-400" />
+                        <div className="bg-amber-500/15 p-2 rounded-xl border border-amber-500/20">
+                          <Sparkles className="w-5 h-5 text-amber-400 animate-spin" />
                         </div>
                         <div>
-                          <h3 className="text-sm font-bold text-white">Asesor AI Invert-Play</h3>
+                          <h3 className="text-sm font-black animate-blink-gold-text">Asesor IA Invert-Play</h3>
                           <p className="text-[11px] text-zinc-400">Contextualizado con tus metas, capital y cotizaciones actuales.</p>
                         </div>
                       </div>
