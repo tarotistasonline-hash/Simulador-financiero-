@@ -62,6 +62,15 @@ export const trackEvent = (eventName: string, properties?: Record<string, any>) 
     }
   }
 
+  // Dispatch custom event for real-time visual monitor in UI
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("mixpanel-event-tracked", {
+        detail: { eventName, properties: currentProps }
+      })
+    );
+  }
+
   // Always log to console in development mode so user can see it's working
   console.log(
     `%c[Mixpanel Evento] ${eventName}`,

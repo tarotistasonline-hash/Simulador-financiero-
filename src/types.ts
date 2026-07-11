@@ -3,6 +3,7 @@ export interface CurrencyRate {
   buy: number;
   sell: number;
   icon: string;
+  change?: number;
 }
 
 export interface FixedIncomeInstrument {

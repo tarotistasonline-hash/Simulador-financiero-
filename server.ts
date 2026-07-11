@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
@@ -25,10 +26,10 @@ const ai = new GoogleGenAI({
 // Mock financial rates for Argentina
 const FINANCIAL_RATES = {
   currencies: [
-    { name: "Dólar Oficial", buy: 915, sell: 955, icon: "Building" },
-    { name: "Dólar MEP (Bolsa)", buy: 1285, sell: 1295, icon: "TrendingUp" },
-    { name: "Dólar CCL", buy: 1310, sell: 1320, icon: "Globe" },
-    { name: "Dólar Cripto (USDT)", buy: 1295, sell: 1308, icon: "Coins" }
+    { name: "Dólar Oficial", buy: 915, sell: 955, change: 0.1, icon: "Building" },
+    { name: "Dólar MEP (Bolsa)", buy: 1285, sell: 1295, change: 3.2, icon: "TrendingUp" },
+    { name: "Dólar CCL", buy: 1310, sell: 1320, change: 1.4, icon: "Globe" },
+    { name: "Dólar Cripto (USDT)", buy: 1295, sell: 1308, change: 0.5, icon: "Coins" }
   ],
   fixedIncome: [
     { name: "Plazo Fijo Tradicional", rate: "37.0% TNA", yield: "43.9% TEA", delay: "30-365 días", risk: "Bajo", desc: "Tasa fija garantizada en pesos regulada por el BCRA." },
@@ -67,6 +68,171 @@ app.get("/api/rates", (req, res) => {
   res.json(FINANCIAL_RATES);
 });
 
+// Persistent visitor counter
+const VISITOR_FILE = path.join(process.cwd(), "visitor_count.json");
+let visitorStats = {
+  totalVisits: 2458, // Initial seed matching the app design, which will now increment with real traffic
+  uniqueUsers: 1450,
+  knownClients: [] as string[]
+};
+
+// Load stats from file if it exists
+try {
+  if (fs.existsSync(VISITOR_FILE)) {
+    const data = fs.readFileSync(VISITOR_FILE, "utf-8");
+    const parsed = JSON.parse(data);
+    if (parsed && typeof parsed === "object") {
+      if (typeof parsed.totalVisits === "number") visitorStats.totalVisits = parsed.totalVisits;
+      if (typeof parsed.uniqueUsers === "number") visitorStats.uniqueUsers = parsed.uniqueUsers;
+      if (Array.isArray(parsed.knownClients)) visitorStats.knownClients = parsed.knownClients;
+    }
+  } else {
+    fs.writeFileSync(VISITOR_FILE, JSON.stringify(visitorStats, null, 2), "utf-8");
+  }
+} catch (e) {
+  console.error("Error loading visitor count file:", e);
+}
+
+// API Endpoint to register and get real-time visitor statistics
+app.post("/api/visitors", (req, res) => {
+  const { clientId } = req.body;
+  
+  visitorStats.totalVisits += 1;
+  
+  if (clientId && typeof clientId === "string" && clientId.trim() !== "") {
+    if (!visitorStats.knownClients.includes(clientId)) {
+      visitorStats.knownClients.push(clientId);
+      visitorStats.uniqueUsers += 1;
+      console.log(`[Visitors] New unique client registered: ${clientId}. Total unique: ${visitorStats.uniqueUsers}`);
+    }
+  }
+  
+  try {
+    fs.writeFileSync(VISITOR_FILE, JSON.stringify(visitorStats, null, 2), "utf-8");
+  } catch (writeErr) {
+    console.error("Error writing visitor count file:", writeErr);
+  }
+  
+  res.json({
+    totalVisits: visitorStats.totalVisits,
+    uniqueUsers: visitorStats.uniqueUsers
+  });
+});
+
+// Shared Circuit Breaker Configuration for Gemini API to prevent quota limits or spam
+let circuitBreakerActiveUntil = 0;
+const BREAKER_DURATION_MS = 15 * 60 * 1000; // 15 minutes of break on quota/API limits
+
+function activateCircuitBreaker(error: any) {
+  const errorStr = String(error?.message || error || "");
+  const isQuota = 
+    errorStr.includes("429") || 
+    errorStr.includes("RESOURCE_EXHAUSTED") || 
+    errorStr.includes("quota") || 
+    errorStr.toLowerCase().includes("circuit breaker") ||
+    errorStr.toLowerCase().includes("rate limit") ||
+    errorStr.toLowerCase().includes("limit exceeded");
+  const isUnavailable = errorStr.includes("503") || errorStr.includes("UNAVAILABLE");
+  
+  if (isQuota || isUnavailable) {
+    circuitBreakerActiveUntil = Date.now() + BREAKER_DURATION_MS;
+    console.warn(`[Circuit Breaker Activated] Bypassing Gemini API calls for 15 minutes due to quota/rate limit error: ${errorStr.substring(0, 150)}`);
+  }
+}
+
+function generateLocalFallbackAdvice(messages: any[], userProfile: any): string {
+  const latestMessage = (messages[messages.length - 1]?.content || "").toLowerCase();
+  
+  const risk = (userProfile?.riskProfile || "moderado").toLowerCase();
+  const capital = userProfile?.capital || 0;
+  const currency = userProfile?.currency || "ARS";
+  
+  let text = `⚠️ **[Asesor de Contingencia Activo - Límite de Cuota de IA Excedido]**\n\n*¡Hola! El motor principal de Inteligencia Artificial (Gemini) ha alcanzado el límite de consultas gratuitas de este servidor compartido en este minuto. Para evitar mostrarte un error, nuestro sistema local ha procesado tu perfil y preparado una recomendación financiera personalizada:* \n\n`;
+
+  // Check query keywords
+  if (latestMessage.includes("jubila") || latestMessage.includes("pension") || latestMessage.includes("mínimo") || latestMessage.includes("minimo") || latestMessage.includes("sueldo") || latestMessage.includes("ingreso bajo") || latestMessage.includes("retirado")) {
+    text += `### 👵🏽 Guía de Optimización para Jubilados e Ingresos Mínimos: Rendimiento Diario y Rescate Inmediato\n\n`;
+    text += `Para un jubilado o alguien con un sueldo mínimo en Argentina, **la liquidez es vital**: no se puede dar el lujo de congelar dinero por 30 días (como en un Plazo Fijo) ante imprevistos médicos o compras de alimentos diarios. Sin embargo, dejar los pesos quietos en el banco es una pérdida constante por la inflación.\n\n`;
+    text += `Aquí tienes la estrategia financiera defensiva más eficiente para optimizar ingresos magros:\n\n`;
+    text += `#### 1. 📱 Billeteras Virtuales con Cuentas Remuneradas (Rescate Inmediato 24/7)\n`;
+    text += `En lugar de dejar la jubilación o el sueldo en la caja de ahorro bancaria tradicional, **transfiérelo el mismo día de cobro** a una billetera digital que pague intereses diarios por solo tener el dinero allí:\n\n`;
+    text += `- **Naranja X**: Ofrece una de las tasas remuneradas más altas del mercado (TNA ~40% o similar sobre saldos diarios) hasta un tope de saldo (actualmente $600.000 ARS). Es ideal para dejar el dinero del mes que vas consumiendo día a día.\n`;
+    text += `- **Personal Pay / Ualá / Mercado Pago**: Sus fondos comunes de inversión de Money Market rinden aproximadamente un **~33.5% TNA**. El dinero sigue disponible las 24 horas del día, los 7 días de la semana, para compras con su tarjeta de débito, pagos de servicios o transferencias.\n\n`;
+    text += `#### 2. 📅 El Truco del "Diferimiento de Pagos"\n`;
+    text += `- **No pagues las cuentas antes de tiempo**: Si una factura de luz, gas o celular vence el día 15, no la pagues el día 1 en cuanto cobras. Deja ese dinero generando intereses diarios en tu cuenta remunerada y programa el pago para el mismo día del vencimiento.\n`;
+    text += `- Al hacer esto con todos tus gastos mensuales, logras que el dinero trabaje para ti entre **10 y 15 días extra**, generando un rendimiento adicional que alivia tu bolsillo.\n\n`;
+    text += `#### 3. 🛍️ Aprovecha Reintegros y Promociones Provinciales/Bancarias\n`;
+    text += `- **Cuenta DNI (Banco Provincia)**: Si resides en Buenos Aires, es una herramienta de ahorro indispensable con reintegros de hasta 35% o 40% en carnicerías, verdulerías y comercios de barrio en días específicos.\n`;
+    text += `- **BNA+ (Banco Nación)** y billeteras digitales como **Personal Pay** (que ofrece niveles de reintegro en base a consumos) pueden devolverte miles de pesos mensuales en compras esenciales.\n`;
+    text += `- **Devolución de IVA o Reintegros para Jubilados**: Monitorea siempre los beneficios vigentes de ANSES o de AFIP que reintegran un porcentaje de las compras realizadas con la tarjeta de débito donde cobras tus haberes.\n\n`;
+    text += `#### 4. ❌ ¿Conviene el Plazo Fijo Tradicional?\n`;
+    text += `- **No se recomienda** para montos que correspondan al sustento diario. Aunque pague un poco más que una billetera virtual, el hecho de no poder tocar el dinero por **30 días enteros** es un riesgo muy alto ante cualquier urgencia.\n`;
+    text += `- Úsalo únicamente si lograste separar un pequeño "excedente" que sabes con certeza absoluta que no vas a necesitar bajo ninguna circunstancia durante el próximo mes.`;
+  } else if (latestMessage.includes("uva") || latestMessage.includes("plazo") || latestMessage.includes("fijo") || latestMessage.includes("tna")) {
+    text += `### 🏦 Comparativa de Tasas en Pesos (Plazo Fijo vs UVA vs FCI)\n\n`;
+    text += `Actualmente, las tasas en pesos para el mercado argentino se estructuran de la siguiente manera:\n\n`;
+    text += `- **Plazo Fijo Tradicional (TNA ~37%)**: Te ofrece una previsibilidad absoluta, sabés exactamente cuánto vas a cobrar al final del período de 30 días. Sin embargo, con una inflación mensual que ronda el ~4.1%, la tasa real mensual (~3.08%) queda **por debajo de la inflación**, perdiendo poder adquisitivo lentamente.\n`;
+    text += `- **Plazo Fijo UVA (Inflación + 1%)**: Excelente cobertura para empatarle o ganarle a la inflación de precios reales, pero tiene el contra de requerir una **inmovilización mínima de 180 días**. Si necesitás liquidez antes, este instrumento no es viable.\n`;
+    text += `- **FCI Money Market (TNA ~33.5%)**: El fondo común diario con rescate inmediato en pesos que encontrás en billeteras digitales como Mercado Pago o Ualá. Paga un rendimiento un poco menor que el Plazo Fijo, pero la **liquidez es inmediata (las 24 hs, incluyendo fines de semana)**.\n\n`;
+    text += `**Ventajas de la Renta Fija en Pesos:**\n- Cero volatilidad o riesgo de precio si el dólar oficial o financiero se planchan.\n- Ideal para administrar los fondos mensuales destinados a pagos corrientes o compromisos con fechas fijas.\n\n`;
+    text += `**Riesgos / Desventajas:**\n- Exposición directa a la devaluación si se produce una disparada del dólar financiero (MEP/CCL).\n- Licuación si la tasa real no llega a ganarle a la inflación subyacente.`;
+  } else if (latestMessage.includes("mep") || latestMessage.includes("dolar") || latestMessage.includes("dólar") || latestMessage.includes("parking") || latestMessage.includes("ccl")) {
+    text += `### 💵 Todo sobre el Dólar MEP (Bolsa) y Cobertura Cambiaria\n\n`;
+    text += `El **Dólar MEP (Bolsa)** cotiza actualmente en aproximadamente **$1295 ARS**. Comprar Dólar MEP es una de las maneras más populares de dolarizar ahorros en blanco en Argentina de forma legal e ilimitada.\n\n`;
+    text += `**¿Cómo funciona el proceso de compra regulado?**\n`;
+    text += `1. **Comprar un Bono en Pesos**: Comúnmente el bono soberano AL30 en la especie pesos.\n`;
+    text += `2. **Parking Obligatorio**: Debés esperar el plazo regulatorio mínimo (actualmente **24 horas hábiles / 1 día de parking**) sin poder vender el activo. Es un tiempo de espera impuesto por la Comisión Nacional de Valores (CNV).\n`;
+    text += `3. **Vender el Bono en Dólares**: Se vende el activo bajo la especie AL30D, acreditándose los dólares líquidos de forma limpia en tu cuenta de inversiones.\n\n`;
+    text += `**Ventajas:**\n- Dolarización 100% legal, sin límites (saltando el cepo cambiario de los USD 200 bancarios) y con liquidación inmediata.\n- Es el paso previo ideal para comprar Obligaciones Negociables (ONs) o fondear inversiones en renta fija en dólares.\n\n`;
+    text += `**Riesgos / Desventajas:**\n- Riesgo de volatilidad del bono durante las 24 hs del parking. Si el precio del AL30 baja sensiblemente en ese lapso, el tipo de cambio implícito final puede resultar levemente más alto.`;
+  } else if (latestMessage.includes("cedear") || latestMessage.includes("acciones") || latestMessage.includes("spy") || latestMessage.includes("apple") || latestMessage.includes("tsla") || latestMessage.includes("meli") || latestMessage.includes("nvda") || latestMessage.includes("merval")) {
+    text += `### 📈 CEDEARs (Certificados de Depósito Argentinos)\n\n`;
+    text += `Los **CEDEARs** representan fracciones de acciones de empresas extranjeras muy reconocidas que cotizan en el exterior (como Apple, Tesla, MercadoLibre, Nvidia) o índices (como el S&P 500 bajo la sigla SPY) pero que podés comprar en pesos o dólares desde una cuenta local en Argentina.\n\n`;
+    text += `**Doble Variación (Aspecto Crítico de Riesgo/Retorno):**\n`;
+    text += `El precio de un CEDEAR en pesos varía en base a dos factores independientes en simultáneo:\n`;
+    text += `1. **La cotización del Dólar CCL (Contado con Liquidación)** en la plaza local argentina.\n`;
+    text += `2. **El precio de la acción subyacente** en su mercado de origen (ej: Wall Street en USD).\n\n`;
+    text += `**Ventajas:**\n- Te protegen contra una eventual devaluación del peso argentino al estar indexados al tipo de cambio financiero.\n- Diversificación mundial: podés ser dueño de gigantes como Microsoft, Google o Nvidia desde Argentina con montos bajos.\n\n`;
+    text += `**Desventajas / Riesgos:**\n- Riesgo Cambiario inverso: si el dólar financiero baja o se estabiliza mientras la inflación en pesos corre al 4%, vas a sufrir rentabilidad real negativa en pesos.\n- Riesgo de Mercado: si hay una corrección o caída en la bolsa de Nueva York, el CEDEAR bajará aunque el dólar suba.`;
+  } else if (latestMessage.includes("portafolio") || latestMessage.includes("diversific") || latestMessage.includes("recomiend") || latestMessage.includes("invert")) {
+    text += `### 💼 Estructura de Portafolio Recomendada\n\n`;
+    if (risk === "bajo") {
+      text += `Como seleccionaste un **Perfil de Riesgo Bajo**, la prioridad absoluta es conservar capital y mantener buena liquidez:\n\n`;
+      text += `1. **70% en Renta Fija Líquida**: Repartido en **FCI Money Market (Mercado Pago / Ualá)** para transacciones cotidianas de corto plazo, y **Plazo Fijo UVA** para cubrirte de la inflación en pesos a mediano plazo.\n`;
+      text += `2. **30% en Obligaciones Negociables (ONs)** corporativas de primer nivel (ej: YPF, Pampa Energía, Telecom) nominadas en dólares que paguen cupones periódicos (rendimientos históricos ~7.0% - 9.0% anual en dólares billete).`;
+    } else if (risk === "agresivo") {
+      text += `Como seleccionaste un **Perfil de Riesgo Agresivo**, el objetivo principal es maximizar el retorno a largo plazo tolerando alta volatilidad cambiaria o bursátil:\n\n`;
+      text += `1. **60% en CEDEARs Diversificados**: Mantener un núcleo fuerte en el ETF del S&P 500 (**SPY**), acompañado de satélites en tecnológicas de fuerte rendimiento de inteligencia artificial o e-commerce como **NVDA**, **MSFT** y **MELI**.\n`;
+      text += `2. **20% en Acciones de la Bolsa Local (Merval)**: Invertir en empresas líderes locales con valuaciones competitivas (ej: GGAL, YPFD, PAMP).\n`;
+      text += `3. **20% en Criptomonedas**: Con un mix entre monedas estables con rendimiento en dólares (USDT) y una porción en activos fuertes de renta variable cripto como **BTC** y **ETH** para capturar ciclos alcistas de alta intensidad.`;
+    } else {
+      // moderado
+      text += `Como seleccionaste un **Perfil de Riesgo Moderado**, buscamos un sano equilibrio entre cobertura de poder de compra y búsqueda de rentabilidad cambiaria:\n\n`;
+      text += `1. **40% en Obligaciones Negociables (ONs)** en dólares: Garantiza una renta fija regular, previsible e independiente de los vaivenes de la moneda local, pagándote cupones en dólares directamente en tu cuenta de bolsa.\n`;
+      text += `2. **30% en CEDEARs de Índices Estables**: Invertir principalmente en el **SPY** (S&P 500) o en corporaciones maduras como **AAPL** o **MSFT** que amortiguan caídas severas.\n`;
+      text += `3. **30% en Instrumentos en Pesos Ajustados por Inflación**: Fondos comunes de inversión indexados por CER (inflación) o Plazos Fijos UVA para ganarle a la suba de precios internos del país.`;
+    }
+  } else {
+    text += `### 💡 Planificación Financiera Estratégica\n\n`;
+    text += `Para optimizar tu capital inicial de **${currency} ${capital.toLocaleString("es-AR")}**, te sugerimos concentrarte en estos pilares clave:\n\n`;
+    text += `1. **Fondo de Emergencia**: Nunca inviertas dinero necesario en el corto plazo (menos de 6 meses) en activos volátiles. Ese dinero de reserva debe residir en instrumentos súper líquidos como **FCI Money Market (TNA ~33.5%)**.\n`;
+    text += `2. **Identificar la Preocupación Principal**:\n`;
+    text += `   - Si te quita el sueño la inflación local: El camino ideal es la renta indexada por pesos (**Plazo Fijo UVA** o fondos CER).\n`;
+    text += `   - Si tu prioridad es la cobertura contra devaluaciones repentinas: La respuesta es dolarizarte mediante **Dólar MEP**, **Obligaciones Negociables (ONs)** o **CEDEARs**.\n\n`;
+    text += `**Tu Perfil Declarado: ${risk.toUpperCase()}**\n`;
+    if (risk === "bajo") {
+      text += `Es preferible consolidar una cartera de renta fija pura: letras del tesoro local cortas, billeteras remuneradas y ONs corporativas que paguen dólares billete.`;
+    } else if (risk === "agresivo") {
+      text += `Podés potenciar el capital asumiendo más riesgo de mercado. Un portafolio compuesto mayormente por CEDEARs de primer nivel de Wall Street e inversiones criptográficas te dará el mayor potencial de crecimiento real.`;
+    } else {
+      text += `El sendero balanceado es tu mejor opción: un mix equilibrado entre renta fija garantizada en dólares de mediano plazo y renta variable moderada en acciones globales estables.`;
+    }
+  }
+
+  text += `\n\n---\n*Nota: El servicio de IA inteligente se restablecerá automáticamente en este simulador una vez concluida la pausa temporal de cuota compartida. Si deseas consultar libremente y sin ningún tipo de límite, puedes hacerlo aguardando un breve momento.*`;
+  return text;
+}
+
 // API Endpoint for the AI Investment Advisor Chat
 app.post("/api/advisor/chat", async (req, res) => {
   try {
@@ -76,10 +242,17 @@ app.post("/api/advisor/chat", async (req, res) => {
       return res.status(400).json({ error: "Invalid format. 'messages' array is required." });
     }
 
+    // Check if Circuit Breaker is active - IF SO, SEAMLESSLY RETURN SMART FALLBACK ADVICE WITH 200 OK
+    if (Date.now() < circuitBreakerActiveUntil) {
+      console.log(`[Circuit Breaker Active] Bypassing Gemini Chat to prevent quota spam. Returning local advice.`);
+      const fallbackAdvice = generateLocalFallbackAdvice(messages, userProfile);
+      return res.json({ content: fallbackAdvice, isFallback: true });
+    }
+
     if (!process.env.GEMINI_API_KEY) {
-      return res.status(500).json({ 
-        error: "Falta la configuración de la clave de API de Gemini en el servidor. Por favor, configúrala en el panel de secretos." 
-      });
+      console.log(`[GEMINI_API_KEY Missing] Returning smart local fallback advisor response.`);
+      const fallbackAdvice = generateLocalFallbackAdvice(messages, userProfile);
+      return res.json({ content: fallbackAdvice, isFallback: true });
     }
 
     // Format messages into Gemini format
@@ -125,7 +298,8 @@ Reglas del asesoramiento:
 2. Explica siempre la relación Riesgo vs Retorno. Los CEDEARs tienen riesgo cambiario (variación del CCL) y riesgo de mercado (la acción subyacente).
 3. Usa la jerga argentina de forma amigable (Dólar MEP, Plazo Fijo, Cedears, FCI, Monotributo, ONs, Faca bajo el colchón, etc.) pero mantén el profesionalismo comercial. Puedes tutear o vosear cordialmente de forma sutil y empática.
 4. Explica siempre las diferencias prácticas de plazo y liquidez (ej: Plazo Fijo inmoviliza por 30 días, FCI Money Market liquidez instantánea, CEDEARs liquidez inmediata en horario de mercado T+2 o T+1).
-5. Concluye siempre con un consejo de diversificación acorde a su perfil.`;
+5. Atiende las consultas de jubilados, pensionados o de personas con sueldos mínimos con máxima empatía y sentido práctico: Prioriza la liquidez inmediata, desaconseja el Plazo Fijo si es dinero del sustento diario (por el bloqueo de 30 días), recomienda cuentas remuneradas (Mercado Pago, Naranja X, Personal Pay, Ualá), el truco de diferir vencimientos al máximo para ganar intereses en cuentas remuneradas, y programas de reintegro (Cuenta DNI, BNA+, devoluciones de IVA/ANSES).
+6. Concluye siempre con un consejo de diversificación acorde a su perfil.`;
 
     const modelsToTry = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
     let response;
@@ -156,13 +330,25 @@ Reglas del asesoramiento:
     }
 
     const answer = response?.text || "Disculpas, no pude procesar una respuesta en este momento.";
-    res.json({ content: answer });
+    res.json({ content: answer, isFallback: false });
 
   } catch (error: any) {
     console.error("Gemini API Error in backend:", error);
-    res.status(500).json({ 
-      error: "Error al comunicarse con el motor de IA. Detalles: " + (error.message || error) 
-    });
+    
+    activateCircuitBreaker(error);
+
+    // Instead of throwing an error response code 429/500 and causing red banners in the front-end,
+    // seamlessly transition to the beautiful smart Argentine investment advice fallback!
+    try {
+      const fallbackAdvice = generateLocalFallbackAdvice(req.body.messages || [], req.body.userProfile);
+      return res.json({ content: fallbackAdvice, isFallback: true });
+    } catch (fallbackGenError) {
+      console.error("Failed to generate local advice fallback:", fallbackGenError);
+      res.status(200).json({ 
+        content: "⚠️ **[Fallo en Motor IA y Contingencia]**\n\nDisculpas, no pude procesar tu consulta en este momento debido a un problema temporal con las cuotas del servidor. Por favor, aguarda unos instantes e inténtalo de nuevo.",
+        isFallback: true
+      });
+    }
   }
 });
 
@@ -197,20 +383,6 @@ interface CachedNews {
 
 let newsCache: CachedNews | null = null;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
-
-let circuitBreakerActiveUntil = 0;
-const BREAKER_DURATION_MS = 15 * 60 * 1000; // 15 minutes of break on quota/API limits
-
-function activateCircuitBreaker(error: any) {
-  const errorStr = String(error?.message || error || "");
-  const isQuota = errorStr.includes("429") || errorStr.includes("RESOURCE_EXHAUSTED") || errorStr.includes("quota");
-  const isUnavailable = errorStr.includes("503") || errorStr.includes("UNAVAILABLE");
-  
-  if (isQuota || isUnavailable) {
-    circuitBreakerActiveUntil = Date.now() + BREAKER_DURATION_MS;
-    console.warn(`[Circuit Breaker Activated] Bypassing Gemini API calls for 15 minutes due to quota/rate limit error: ${errorStr.substring(0, 150)}`);
-  }
-}
 
 // API Endpoint to get real-time Argentine financial news using Google Search grounding
 app.get("/api/news", async (req, res) => {

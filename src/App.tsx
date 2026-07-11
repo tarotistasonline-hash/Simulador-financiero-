@@ -27,7 +27,12 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronUp,
-  ArrowUpRight
+  ArrowUpRight,
+  Bell,
+  Trash2,
+  Volume2,
+  VolumeX,
+  Activity
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -93,10 +98,17 @@ export default function App() {
   const [chatInput, setChatInput] = useState<string>("");
   const [chatLoading, setChatLoading] = useState<boolean>(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [isFallbackMode, setIsFallbackMode] = useState<boolean>(false);
 
   // Calculator states
   const [calcPesos, setCalcPesos] = useState<number>(500000);
   const [calcMonths, setCalcMonths] = useState<number>(6);
+
+  // Real Gain (Ganancia Real) Calculator States
+  const [realGainCapital, setRealGainCapital] = useState<number>(1000000);
+  const [realGainFundType, setRealGainFundType] = useState<string>("money_market");
+  const [realGainCustomTna, setRealGainCustomTna] = useState<number>(45);
+  const [realGainMonths, setRealGainMonths] = useState<number>(6);
 
   // Guestbook and Visitor states
   const [visitorCount, setVisitorCount] = useState<number>(2458);
@@ -153,6 +165,133 @@ export default function App() {
   // Mixpanel dynamic configuration states
   const [mixpanelToken, setMixpanelToken] = useState<string>(() => localStorage.getItem("mixpanel_project_token") || "");
   const [mixpanelSaved, setMixpanelSaved] = useState<boolean>(false);
+
+  // --- PRICE ALERTS & NOTIFICATIONS SYSTEM STATES ---
+  interface PriceAlert {
+    id: string;
+    symbol: string;
+    targetPrice: number;
+    condition: "above" | "below";
+    createdAt: string;
+    triggered: boolean;
+    triggeredAt?: string;
+    triggerPrice?: number;
+  }
+
+  interface VisualToast {
+    id: string;
+    type: "volatility" | "target_price" | "mixpanel_event";
+    title: string;
+    message: string;
+    symbol?: string;
+    change?: number;
+    timestamp: string;
+    isCustomAlert?: boolean;
+  }
+
+  interface MixpanelLiveEvent {
+    id: string;
+    eventName: string;
+    properties: any;
+    timestamp: string;
+  }
+
+  const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
+    try {
+      const saved = localStorage.getItem("invertplay_price_alerts");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [activeToasts, setActiveToasts] = useState<VisualToast[]>([]);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("invertplay_sound_enabled");
+    return saved !== "false"; // default true
+  });
+
+  const [mixpanelEvents, setMixpanelEvents] = useState<MixpanelLiveEvent[]>([]);
+
+  // Web Audio API Synthesizer - plays a beautiful chord arpeggio for notifications
+  const playAlertChime = () => {
+    if (!soundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      
+      const playTone = (freq: number, startTime: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, startTime);
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(0.12, startTime + 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+      
+      const now = ctx.currentTime;
+      playTone(784.0, now, 0.4); // G5
+      playTone(1046.5, now + 0.08, 0.5); // C6
+      playTone(1318.5, now + 0.16, 0.6); // E6
+    } catch (e) {
+      console.warn("No se pudo reproducir el sonido:", e);
+    }
+  };
+
+  const triggerToast = (toast: Omit<VisualToast, "timestamp">) => {
+    const newToast: VisualToast = {
+      ...toast,
+      timestamp: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    };
+    setActiveToasts(prev => {
+      if (prev.some(t => t.id === toast.id)) return prev;
+      return [newToast, ...prev].slice(0, 5); // Max 5 visible
+    });
+    // Auto remove after 9 seconds
+    setTimeout(() => {
+      setActiveToasts(prev => prev.filter(t => t.id !== toast.id));
+    }, 9000);
+  };
+
+  const dismissToast = (id: string) => {
+    setActiveToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // Sync alerts to localStorage
+  useEffect(() => {
+    localStorage.setItem("invertplay_price_alerts", JSON.stringify(priceAlerts));
+  }, [priceAlerts]);
+
+  // Sync sound setting to localStorage
+  useEffect(() => {
+    localStorage.setItem("invertplay_sound_enabled", String(soundEnabled));
+  }, [soundEnabled]);
+
+  // Listen to Mixpanel events tracked in real-time
+  useEffect(() => {
+    const handleMixpanelEvent = (e: any) => {
+      if (e.detail) {
+        const newEvent: MixpanelLiveEvent = {
+          id: Math.random().toString(36).substring(2, 9),
+          eventName: e.detail.eventName,
+          properties: e.detail.properties,
+          timestamp: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        };
+        setMixpanelEvents(prev => [newEvent, ...prev].slice(0, 15)); // Keep last 15
+      }
+    };
+
+    window.addEventListener("mixpanel-event-tracked", handleMixpanelEvent);
+    return () => {
+      window.removeEventListener("mixpanel-event-tracked", handleMixpanelEvent);
+    };
+  }, []);
 
   // Inflation warning and simulation states
   const [customInflation, setCustomInflation] = useState<number | null>(null);
@@ -233,6 +372,177 @@ export default function App() {
     }
   };
 
+  const checkPriceAlerts = (currentRates: FinancialRates) => {
+    const now = new Date().toLocaleDateString("es-AR") + " " + new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+    
+    setPriceAlerts(prev => {
+      let isChanged = false;
+      const nextAlerts = prev.map(alert => {
+        if (alert.triggered) return alert;
+        
+        // Find CEDEAR price
+        const cedear = currentRates.cedears.find(c => c.symbol === alert.symbol);
+        if (!cedear) return alert;
+        
+        const currentPrice = cedear.priceARS;
+        let isTriggered = false;
+        
+        if (alert.condition === "above" && currentPrice >= alert.targetPrice) {
+          isTriggered = true;
+        } else if (alert.condition === "below" && currentPrice <= alert.targetPrice) {
+          isTriggered = true;
+        }
+        
+        if (isTriggered) {
+          isChanged = true;
+          
+          // Trigger notification toast
+          triggerToast({
+            id: `alert-${alert.id}-${Date.now()}`,
+            type: "target_price",
+            title: "🎯 Alerta de Precio Alcanzada",
+            message: `¡Tu objetivo para ${alert.symbol} de $${alert.targetPrice.toLocaleString("es-AR")} ARS fue alcanzado! Cotiza ahora a $${currentPrice.toLocaleString("es-AR")} ARS.`,
+            symbol: alert.symbol,
+            change: cedear.change,
+            isCustomAlert: true
+          });
+          
+          // Play sound
+          playAlertChime();
+          
+          // Track Event in Mixpanel
+          trackEvent("Price Alert Triggered", {
+            symbol: alert.symbol,
+            targetPrice: alert.targetPrice,
+            condition: alert.condition,
+            triggerPrice: currentPrice,
+            change: cedear.change
+          });
+          
+          return {
+            ...alert,
+            triggered: true,
+            triggeredAt: now,
+            triggerPrice: currentPrice
+          };
+        }
+        
+        return alert;
+      });
+      
+      return isChanged ? nextAlerts : prev;
+    });
+  };
+
+  const checkVolatilityToasts = (currentRates: FinancialRates) => {
+    const VOLATILITY_THRESHOLD = 3.0;
+    try {
+      const notifiedStr = localStorage.getItem("invertplay_notified_volatility");
+      const notifiedSet = notifiedStr ? new Set<string>(JSON.parse(notifiedStr)) : new Set<string>();
+      
+      const volatileToasts: any[] = [];
+      
+      // 1. Currencies
+      currentRates.currencies.forEach(curr => {
+        if (curr.change && Math.abs(curr.change) >= VOLATILITY_THRESHOLD) {
+          volatileToasts.push({
+            id: `vol-currency-${curr.name}`,
+            type: "volatility",
+            title: "⚡ Volatilidad en Divisa",
+            message: `El ${curr.name} tuvo un movimiento brusco de ${curr.change > 0 ? "+" : ""}${curr.change}% hoy, cotizando a $${curr.sell}.`,
+            symbol: curr.name,
+            change: curr.change
+          });
+        }
+      });
+      
+      // 2. CEDEARs
+      currentRates.cedears.forEach(ced => {
+        if (ced.change && Math.abs(ced.change) >= VOLATILITY_THRESHOLD) {
+          volatileToasts.push({
+            id: `vol-cedear-${ced.symbol}`,
+            type: "volatility",
+            title: "⚡ Volatilidad en CEDEAR",
+            message: `El CEDEAR ${ced.symbol} (${ced.name}) registró una variación de ${ced.change > 0 ? "+" : ""}${ced.change}% en el día, a $${ced.priceARS.toLocaleString("es-AR")} ARS.`,
+            symbol: ced.symbol,
+            change: ced.change
+          });
+        }
+      });
+      
+      // 3. Local Stocks
+      currentRates.localStocks.forEach(stock => {
+        if (stock.change && Math.abs(stock.change) >= VOLATILITY_THRESHOLD) {
+          volatileToasts.push({
+            id: `vol-stock-${stock.symbol}`,
+            type: "volatility",
+            title: "⚡ Volatilidad en Merval",
+            message: `La acción local ${stock.symbol} experimentó un cambio fuerte de ${stock.change > 0 ? "+" : ""}${stock.change}% en la jornada, cotizando a $${stock.priceARS.toLocaleString("es-AR")} ARS.`,
+            symbol: stock.symbol,
+            change: stock.change
+          });
+        }
+      });
+      
+      // 4. Crypto
+      currentRates.crypto.forEach(coin => {
+        if (coin.change && Math.abs(coin.change) >= VOLATILITY_THRESHOLD) {
+          volatileToasts.push({
+            id: `vol-crypto-${coin.symbol}`,
+            type: "volatility",
+            title: "⚡ Volatilidad Cripto",
+            message: `La criptomoneda ${coin.symbol} se movió un ${coin.change > 0 ? "+" : ""}${coin.change}% hoy, cotizando a USD ${coin.priceUSD.toLocaleString("en-US")}.`,
+            symbol: coin.symbol,
+            change: coin.change
+          });
+        }
+      });
+      
+      let triggeredAny = false;
+      volatileToasts.forEach(item => {
+        if (!notifiedSet.has(item.id)) {
+          triggerToast({
+            id: item.id,
+            type: "volatility",
+            title: item.title,
+            message: item.message,
+            symbol: item.symbol,
+            change: item.change,
+            isCustomAlert: false
+          });
+          
+          // Track Event in Mixpanel
+          trackEvent("Volatility Notification Triggered", {
+            instrument: item.symbol,
+            type: item.title,
+            change: item.change
+          });
+          
+          notifiedSet.add(item.id);
+          triggeredAny = true;
+        }
+      });
+      
+      if (triggeredAny) {
+        localStorage.setItem("invertplay_notified_volatility", JSON.stringify(Array.from(notifiedSet)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  useEffect(() => {
+    if (rates) {
+      checkPriceAlerts(rates);
+    }
+  }, [rates, priceAlerts]);
+
+  useEffect(() => {
+    if (rates) {
+      checkVolatilityToasts(rates);
+    }
+  }, [rates]);
+
   const fetchNews = async (forceRefresh = false) => {
     try {
       setLoadingNews(true);
@@ -283,18 +593,52 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // Visitor count persistence and increment
-    const storedCount = localStorage.getItem("invertplay_visitors");
-    let currentCount = 2458;
-    if (storedCount) {
-      currentCount = parseInt(storedCount, 10) + 1;
-    } else {
-      currentCount = Math.floor(Math.random() * 500) + 1200;
+    // Persistent server-backed visitor count
+    let clientId = localStorage.getItem("invertplay_client_id");
+    if (!clientId) {
+      clientId = "client_" + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem("invertplay_client_id", clientId);
     }
-    localStorage.setItem("invertplay_visitors", currentCount.toString());
-    setVisitorCount(currentCount);
 
-    trackEvent("App Loaded", { visitorCount: currentCount });
+    const registerVisit = async () => {
+      try {
+        const res = await fetch("/api/visitors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setVisitorCount(data.totalVisits);
+          trackEvent("App Loaded", { 
+            visitorCount: data.totalVisits,
+            uniqueUsers: data.uniqueUsers,
+            isNewUnique: !localStorage.getItem("invertplay_visitors_synced")
+          });
+          localStorage.setItem("invertplay_visitors_synced", "true");
+        } else {
+          // Fallback if API fails
+          const storedCount = localStorage.getItem("invertplay_visitors");
+          let currentCount = 2458;
+          if (storedCount) {
+            currentCount = parseInt(storedCount, 10) + 1;
+          }
+          setVisitorCount(currentCount);
+          trackEvent("App Loaded", { visitorCount: currentCount });
+        }
+      } catch (err) {
+        console.error("Error registering visit:", err);
+        const storedCount = localStorage.getItem("invertplay_visitors");
+        let currentCount = 2458;
+        if (storedCount) {
+          currentCount = parseInt(storedCount, 10) + 1;
+        }
+        setVisitorCount(currentCount);
+        trackEvent("App Loaded", { visitorCount: currentCount });
+      }
+    };
+
+    registerVisit();
 
     // Guestbook entries persistence
     const storedEntries = localStorage.getItem("invertplay_guestbook");
@@ -708,6 +1052,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
       }
 
       const data = await res.json();
+      setIsFallbackMode(!!data.isFallback);
 
       setChatMessages(prev => [...prev, {
         id: Math.random().toString(),
@@ -726,6 +1071,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
   // Helper to apply quick questions
   const quickQuestions = [
+    { label: "👵🏽 Jubilados y Sueldos Bajos", text: "Soy jubilado o cobro un sueldo mínimo en Argentina. ¿Cómo puedo lograr mayor rendimiento con rescate inmediato sin congelar mi dinero en plazos fijos?" },
     { label: "UVA vs Plazo Fijo", text: "¿Qué me conviene más en este momento: el Plazo Fijo Tradicional o el Plazo Fijo UVA indexado por inflación?" },
     { label: "Cómo comprar Dólar MEP", text: "¿Cuáles son los pasos legales para comprar Dólar MEP desde Argentina y qué parking tiene actualmente?" },
     { label: "Armar portafolio moderado", text: "Tengo un perfil Moderado. ¿Cómo puedo diversificar mis ahorros entre CEDEARs y obligaciones negociables?" },
@@ -1076,11 +1422,11 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
         {/* Right Active View panel: Tabs & details (occupies 8 cols on desktop) */}
         <section className="lg:col-span-8 flex flex-col gap-6">
           
-          {/* Custom Premium Tabs Navigation Bar */}
-          <nav className="bg-zinc-900/50 p-1.5 rounded-2xl border border-zinc-800/80 flex flex-wrap gap-1">
+          {/* Custom Premium Tabs Navigation Bar - Optimized for Mobile with horizontal scrolling, preventing wrapping */}
+          <nav className="bg-zinc-900/50 p-1.5 rounded-2xl border border-zinc-800/80 flex overflow-x-auto sm:flex-wrap gap-1.5 scrollbar-none [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] select-none touch-pan-x">
             <button
               onClick={() => setActiveTab("rates")}
-              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[115px] sm:min-w-[120px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
                 activeTab === "rates"
                   ? "bg-zinc-800 text-white shadow-md border-b border-zinc-700"
                   : "text-zinc-400 hover:text-white hover:bg-zinc-800/30"
@@ -1091,7 +1437,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </button>
             <button
               onClick={() => setActiveTab("simulator")}
-              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[115px] sm:min-w-[120px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
                 activeTab === "simulator"
                   ? "bg-zinc-800 text-white shadow-md border-b border-zinc-700"
                   : "text-zinc-400 hover:text-white hover:bg-zinc-800/30"
@@ -1102,7 +1448,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </button>
             <button
               onClick={() => setActiveTab("calculator")}
-              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[115px] sm:min-w-[120px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition ${
                 activeTab === "calculator"
                   ? "bg-zinc-800 text-white shadow-md border-b border-zinc-700"
                   : "text-zinc-400 hover:text-white hover:bg-zinc-800/30"
@@ -1113,7 +1459,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </button>
             <button
               onClick={() => setActiveTab("advisor")}
-              className={`flex-1 min-w-[120px] py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[115px] sm:min-w-[120px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition ${
                 activeTab === "advisor"
                   ? "bg-amber-500 text-zinc-950 font-black border border-amber-300 shadow-lg shadow-amber-500/20"
                   : "bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/20 font-extrabold"
@@ -1372,6 +1718,201 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                         {/* Local Stocks and Crypto columns */}
                         <div className="md:col-span-5 flex flex-col gap-4">
                           
+                          {/* Price Alerts Widget */}
+                          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden">
+                            {/* Accent Glow */}
+                            <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl pointer-events-none" />
+
+                            <div className="flex justify-between items-center border-b border-zinc-800/80 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <div className="bg-indigo-500/10 border border-indigo-500/20 p-1.5 rounded-lg text-indigo-400">
+                                  <Bell className="w-4 h-4 animate-bounce" />
+                                </div>
+                                <div>
+                                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                                    Alertas de Precios
+                                  </h3>
+                                  <p className="text-[10px] text-zinc-500">Monitorea tus CEDEARs favoritos</p>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  setSoundEnabled(!soundEnabled);
+                                  trackEvent("Sound Settings Toggled", { enabled: !soundEnabled });
+                                }}
+                                className={`p-1.5 rounded-lg border transition ${
+                                  soundEnabled 
+                                    ? "bg-zinc-950 border-zinc-800 text-indigo-400 hover:text-indigo-300" 
+                                    : "bg-zinc-950 border-zinc-850 text-zinc-500 hover:text-zinc-400"
+                                }`}
+                                title={soundEnabled ? "Silenciar alertas" : "Activar sonido de alerta"}
+                              >
+                                {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+
+                            {/* Create New Alert Form */}
+                            <div className="bg-zinc-950/50 p-3.5 rounded-xl border border-zinc-850/80 flex flex-col gap-3">
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Nueva Alerta de CEDEAR</span>
+                              
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[9px] text-zinc-500 font-bold uppercase">Activo</label>
+                                  <select
+                                    id="alert-symbol-select"
+                                    className="bg-zinc-950 border border-zinc-800 rounded-lg py-1.5 px-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                                  >
+                                    {rates.cedears.map(c => (
+                                      <option key={c.symbol} value={c.symbol}>
+                                        {c.symbol} (${c.priceARS.toLocaleString()})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="flex flex-col gap-1">
+                                  <label className="text-[9px] text-zinc-500 font-bold uppercase">Condición</label>
+                                  <select
+                                    id="alert-condition-select"
+                                    className="bg-zinc-950 border border-zinc-800 rounded-lg py-1.5 px-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                  >
+                                    <option value="above">Mayor o igual (≥)</option>
+                                    <option value="below">Menor o igual (≤)</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="flex gap-2 items-end">
+                                <div className="flex-1 flex flex-col gap-1">
+                                  <label className="text-[9px] text-zinc-500 font-bold uppercase">Precio Objetivo (ARS)</label>
+                                  <div className="relative">
+                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500 text-xs">$</span>
+                                    <input
+                                      id="alert-price-input"
+                                      type="number"
+                                      placeholder="Precio"
+                                      className="w-full bg-zinc-950 border border-zinc-800 rounded-lg py-1.5 pl-6 pr-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                                    />
+                                  </div>
+                                </div>
+                                
+                                <button
+                                  onClick={() => {
+                                    const symbolSelect = document.getElementById("alert-symbol-select") as HTMLSelectElement;
+                                    const conditionSelect = document.getElementById("alert-condition-select") as HTMLSelectElement;
+                                    const priceInput = document.getElementById("alert-price-input") as HTMLInputElement;
+                                    
+                                    const symbol = symbolSelect.value;
+                                    const condition = conditionSelect.value as "above" | "below";
+                                    const targetPrice = parseFloat(priceInput.value);
+                                    
+                                    if (isNaN(targetPrice) || targetPrice <= 0) {
+                                      alert("Por favor ingresá un precio válido mayor a 0.");
+                                      return;
+                                    }
+                                    
+                                    const newAlert: PriceAlert = {
+                                      id: Math.random().toString(36).substring(2, 9),
+                                      symbol,
+                                      targetPrice,
+                                      condition,
+                                      createdAt: new Date().toLocaleDateString("es-AR") + " " + new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+                                      triggered: false
+                                    };
+                                    
+                                    setPriceAlerts(prev => [newAlert, ...prev]);
+                                    priceInput.value = "";
+                                    
+                                    trackEvent("Price Alert Created", {
+                                      symbol,
+                                      targetPrice,
+                                      condition
+                                    });
+                                  }}
+                                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg transition shrink-0 h-[32px] flex items-center justify-center gap-1 active:scale-[0.98]"
+                                >
+                                  Crear 🎯
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Active & Triggered Alerts List */}
+                            <div className="flex flex-col gap-2.5">
+                              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Tus Alertas</span>
+                              
+                              {priceAlerts.length === 0 ? (
+                                <div className="text-center py-6 px-4 bg-zinc-950/30 rounded-xl border border-zinc-850 border-dashed text-zinc-500">
+                                  <Bell className="w-5 h-5 mx-auto mb-1.5 text-zinc-600 opacity-60" />
+                                  <p className="text-[11px]">No tenés alertas configuradas.</p>
+                                  <p className="text-[9px] mt-0.5 text-zinc-600 font-medium">Establecé un objetivo arriba para recibir avisos.</p>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1 scrollbar-none">
+                                  {priceAlerts.map(alert => {
+                                    const cedear = rates.cedears.find(c => c.symbol === alert.symbol);
+                                    const currentPrice = cedear ? cedear.priceARS : 0;
+                                    return (
+                                      <div 
+                                        key={alert.id} 
+                                        className={`p-2.5 rounded-lg border text-xs flex items-center justify-between transition ${
+                                          alert.triggered 
+                                            ? "bg-emerald-950/20 border-emerald-900/30 text-emerald-400" 
+                                            : "bg-zinc-950/50 border-zinc-850/80 hover:border-zinc-800 text-zinc-300"
+                                        }`}
+                                      >
+                                        <div className="flex flex-col gap-0.5">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="font-extrabold text-white">{alert.symbol}</span>
+                                            <span className="text-[10px] text-zinc-500 font-semibold">
+                                              {alert.condition === "above" ? "≥" : "≤"} ${alert.targetPrice.toLocaleString("es-AR")}
+                                            </span>
+                                            {alert.triggered ? (
+                                              <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase animate-pulse">
+                                                ¡Disparada!
+                                              </span>
+                                            ) : (
+                                              <span className="flex items-center gap-1 text-[8px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded uppercase">
+                                                <span className="w-1 h-1 bg-indigo-400 rounded-full animate-ping" />
+                                                Activa
+                                              </span>
+                                            )}
+                                          </div>
+                                          
+                                          <div className="text-[10px] text-zinc-500 flex flex-wrap gap-x-2">
+                                            <span>Creada: {alert.createdAt.split(" ")[1]}</span>
+                                            {alert.triggered && (
+                                              <span className="text-emerald-500 font-medium">
+                                                Disparada a: ${alert.triggerPrice?.toLocaleString("es-AR")} ({alert.triggeredAt?.split(" ")[1]})
+                                              </span>
+                                            )}
+                                            {!alert.triggered && currentPrice > 0 && (
+                                              <span>Actual: ${currentPrice.toLocaleString("es-AR")} ARS</span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          onClick={() => {
+                                            setPriceAlerts(prev => prev.filter(a => a.id !== alert.id));
+                                            trackEvent("Price Alert Deleted", {
+                                              symbol: alert.symbol,
+                                              targetPrice: alert.targetPrice
+                                            });
+                                          }}
+                                          className="p-1 text-zinc-500 hover:text-red-400 rounded transition hover:bg-red-500/10"
+                                          title="Eliminar alerta"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
                           {/* Crypto */}
                           <div>
                             <h3 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
@@ -1737,6 +2278,298 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                       </ResponsiveContainer>
                     </div>
                   </div>
+
+                  {/* Real Gain (Ganancia Real) Calculator Section */}
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-5">
+                    <div className="flex items-center gap-2 border-b border-zinc-800 pb-3">
+                      <Calculator className="w-5 h-5 text-emerald-400" />
+                      <div>
+                        <h4 className="text-sm font-semibold text-white">Calculadora de Ganancia Real (Rendimiento Neto vs Inflación)</h4>
+                        <p className="text-[11px] text-zinc-400">Calculá si tu fondo común de inversión o billetera realmente gana poder adquisitivo o si pierde contra la inflación acumulada.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* Left: Interactive Inputs (5 cols on lg) */}
+                      <div className="lg:col-span-5 flex flex-col gap-4">
+                        {/* Capital input */}
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex justify-between items-center text-xs font-semibold">
+                            <span className="text-zinc-400">Capital a Simular:</span>
+                            <span className="text-white font-mono">
+                              {userProfile.currency === "USD" ? "USD" : "ARS"} {realGainCapital.toLocaleString("es-AR")}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="50000"
+                            max="10000000"
+                            step="50000"
+                            value={realGainCapital}
+                            onChange={(e) => setRealGainCapital(parseInt(e.target.value) || 50000)}
+                            className="w-full accent-emerald-500 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                          />
+                          <div className="flex justify-between text-[9px] text-zinc-500 font-mono">
+                            <span>$50k</span>
+                            <span>$5M</span>
+                            <span>$10M</span>
+                          </div>
+                        </div>
+
+                        {/* Months input */}
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex justify-between items-center text-xs font-semibold">
+                            <span className="text-zinc-400">Plazo de Permanencia:</span>
+                            <span className="text-emerald-400 font-mono font-bold">
+                              {realGainMonths} {realGainMonths === 1 ? "mes" : "meses"}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="24"
+                            step="1"
+                            value={realGainMonths}
+                            onChange={(e) => setRealGainMonths(parseInt(e.target.value) || 1)}
+                            className="w-full accent-emerald-500 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                          />
+                          <div className="flex justify-between text-[9px] text-zinc-500 font-mono">
+                            <span>1 mes</span>
+                            <span>12 meses</span>
+                            <span>24 meses</span>
+                          </div>
+                        </div>
+
+                        {/* Fund Selector */}
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-semibold text-zinc-400">Instrumento / Fondo de Inversión:</label>
+                          <select
+                            value={realGainFundType}
+                            onChange={(e) => setRealGainFundType(e.target.value)}
+                            className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                          >
+                            <option value="money_market">FCI Money Market (Mercado Pago, Ualá) (~33.5% TNA)</option>
+                            <option value="naranja_x">Cuenta Remunerada Naranja X (~40% TNA)</option>
+                            <option value="plazo_fijo">Plazo Fijo Tradicional (~37% TNA)</option>
+                            <option value="renta_fija">FCI Renta Fija (Bonos Cortos) (~45% TNA)</option>
+                            <option value="acciones_arg">FCI Acciones Argentinas (~70% TNA)</option>
+                            <option value="custom">Fondo Personalizado (Tasa Propia)</option>
+                          </select>
+                        </div>
+
+                        {/* Custom TNA if chosen */}
+                        {realGainFundType === "custom" && (
+                          <div className="flex flex-col gap-1.5 bg-zinc-950/60 p-3 rounded-xl border border-zinc-850/80">
+                            <div className="flex justify-between items-center text-xs font-semibold">
+                              <span className="text-zinc-400">Tasa Nominal Anual (TNA) de tu Fondo:</span>
+                              <span className="text-indigo-400 font-mono font-bold">
+                                {realGainCustomTna}% TNA
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="10"
+                              max="150"
+                              step="5"
+                              value={realGainCustomTna}
+                              onChange={(e) => setRealGainCustomTna(parseInt(e.target.value) || 45)}
+                              className="w-full accent-indigo-500 h-1.5 bg-zinc-800 rounded-lg cursor-pointer"
+                            />
+                            <div className="flex justify-between text-[9px] text-zinc-500 font-mono">
+                              <span>10%</span>
+                              <span>80%</span>
+                              <span>150%</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Sincronizado con inflación */}
+                        <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-850 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <Percent className="w-4 h-4 text-amber-400" />
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-white">Inflación Simulada</span>
+                              <span className="text-[10px] text-zinc-500">Tasa mensual de referencia</span>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-xs font-mono font-black text-amber-400">
+                              {currentInflation.toFixed(1)}% mensual
+                            </span>
+                            <span className="text-[9px] text-zinc-500">Ajustable en menú lateral</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Rich results cards (7 cols on lg) */}
+                      <div className="lg:col-span-7 flex flex-col gap-4">
+                        {(() => {
+                          let fundTna = 0.35;
+                          let fundLabel = "Fondo de Inversión";
+                          switch (realGainFundType) {
+                            case "money_market":
+                              fundTna = 0.335;
+                              fundLabel = "FCI Money Market (Mercado Pago / Ualá)";
+                              break;
+                            case "naranja_x":
+                              fundTna = 0.40;
+                              fundLabel = "Cuenta Remunerada Naranja X";
+                              break;
+                            case "renta_fija":
+                              fundTna = 0.45;
+                              fundLabel = "FCI Renta Fija Pesos";
+                              break;
+                            case "plazo_fijo":
+                              fundTna = 0.37;
+                              fundLabel = "Plazo Fijo Tradicional";
+                              break;
+                            case "acciones_arg":
+                              fundTna = 0.70;
+                              fundLabel = "FCI Acciones Argentinas";
+                              break;
+                            case "custom":
+                              fundTna = realGainCustomTna / 100;
+                              fundLabel = "Fondo Personalizado";
+                              break;
+                          }
+
+                          // Calculations
+                          const fundMonthlyRate = Math.pow(1 + fundTna, 1 / 12) - 1;
+                          const finalNominal = realGainCapital * Math.pow(1 + fundMonthlyRate, realGainMonths);
+                          const nominalEarnings = finalNominal - realGainCapital;
+
+                          const inflationMonthlyRate = currentInflation / 100;
+                          const accumulatedInflation = Math.pow(1 + inflationMonthlyRate, realGainMonths) - 1;
+                          const finalRequiredForInflation = realGainCapital * (1 + accumulatedInflation);
+
+                          const realValueInTodayMoney = finalNominal / (1 + accumulatedInflation);
+                          const netRealReturn = realValueInTodayMoney - realGainCapital;
+                          const realRatePercent = (realValueInTodayMoney / realGainCapital - 1) * 100;
+
+                          const isPositiveReal = netRealReturn >= 0;
+
+                          return (
+                            <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-xl flex flex-col gap-4 justify-between h-full">
+                              
+                              {/* Main metric */}
+                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-zinc-900/60 p-3.5 rounded-xl border border-zinc-800">
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                                    Resultado de Ganancia Real Neto
+                                  </span>
+                                  <span className={`text-2xl font-black font-mono tracking-tight mt-0.5 ${
+                                    isPositiveReal ? "text-emerald-400" : "text-rose-400"
+                                  }`}>
+                                    {isPositiveReal ? "+" : ""}
+                                    {userProfile.currency === "USD" ? "USD" : "ARS"}{" "}
+                                    {Math.round(netRealReturn).toLocaleString("es-AR")}
+                                  </span>
+                                  <span className={`text-[11px] font-bold mt-1 flex items-center gap-1 ${
+                                    isPositiveReal ? "text-emerald-400/90" : "text-rose-400/90"
+                                  }`}>
+                                    {isPositiveReal ? (
+                                      <>
+                                        <CheckCircle2 className="w-4.5 h-4.5 text-emerald-400 shrink-0" />
+                                        Rendimiento Real Positivo: +{realRatePercent.toFixed(1)}%
+                                      </>
+                                    ) : (
+                                      <>
+                                        <AlertTriangle className="w-4.5 h-4.5 text-rose-400 shrink-0" />
+                                        Pérdida de Poder de Compra: {realRatePercent.toFixed(1)}%
+                                      </>
+                                    )}
+                                  </span>
+                                </div>
+
+                                <div className={`text-[10px] px-2.5 py-1.5 rounded-lg border font-bold uppercase ${
+                                  isPositiveReal 
+                                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+                                    : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                                }`}>
+                                  {isPositiveReal ? "Supera Inflación ✅" : "Licuado de Capital ⚠️"}
+                                </div>
+                              </div>
+
+                              {/* Visual comparison bars */}
+                              <div className="flex flex-col gap-3">
+                                {/* Bar 1: Your investment */}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex justify-between text-[11px] font-medium">
+                                    <span className="text-zinc-300 font-semibold">Valor Final de tu Inversión (Nominal):</span>
+                                    <span className="text-zinc-100 font-bold font-mono">
+                                      {userProfile.currency === "USD" ? "USD" : "ARS"}{" "}
+                                      {Math.round(finalNominal).toLocaleString("es-AR")} ({((finalNominal / realGainCapital - 1) * 100).toFixed(1)}% nominal)
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-2.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                                    <div 
+                                      className="h-full bg-emerald-500 rounded-full transition-all duration-300" 
+                                      style={{ width: `${Math.min(100, (finalNominal / Math.max(finalNominal, finalRequiredForInflation)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Bar 2: Inflation limit */}
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex justify-between text-[11px] font-medium">
+                                    <span className="text-zinc-400 font-semibold">Límite Necesario para no Perder (Inflación):</span>
+                                    <span className="text-zinc-300 font-bold font-mono">
+                                      {userProfile.currency === "USD" ? "USD" : "ARS"}{" "}
+                                      {Math.round(finalRequiredForInflation).toLocaleString("es-AR")} ({((accumulatedInflation) * 100).toFixed(1)}% infl.)
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-2.5 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
+                                    <div 
+                                      className="h-full bg-amber-500 rounded-full transition-all duration-300" 
+                                      style={{ width: `${Math.min(100, (finalRequiredForInflation / Math.max(finalNominal, finalRequiredForInflation)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Breakdown details */}
+                              <div className="grid grid-cols-2 gap-3.5 bg-zinc-900/40 p-3 rounded-xl border border-zinc-850/60 text-xs text-zinc-400">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-[10px] uppercase font-bold text-zinc-500">Interés Ganado (Nominal)</span>
+                                  <span className="font-mono text-white font-bold">
+                                    +{userProfile.currency === "USD" ? "USD" : "ARS"}{" "}
+                                    {Math.round(nominalEarnings).toLocaleString("es-AR")}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500">TNA del instrumento: {(fundTna * 100).toFixed(1)}%</span>
+                                </div>
+                                <div className="flex flex-col gap-0.5 border-l border-zinc-800/80 pl-3.5">
+                                  <span className="text-[10px] uppercase font-bold text-zinc-500">Poder de Compra Real</span>
+                                  <span className={`font-mono font-bold ${isPositiveReal ? "text-emerald-400" : "text-rose-400"}`}>
+                                    {userProfile.currency === "USD" ? "USD" : "ARS"}{" "}
+                                    {Math.round(realValueInTodayMoney).toLocaleString("es-AR")}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500">Inflación acumulada: {(accumulatedInflation * 100).toFixed(1)}%</span>
+                                </div>
+                              </div>
+
+                              {/* Recommendation */}
+                              <div className={`p-3 rounded-xl border text-[11px] leading-relaxed ${
+                                isPositiveReal
+                                  ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-300/90"
+                                  : "bg-amber-500/5 border-amber-500/20 text-amber-300/90"
+                              }`}>
+                                {isPositiveReal ? (
+                                  <p>
+                                    <strong>🎉 ¡Meta alcanzada!</strong> Tu dinero invertido en <strong>{fundLabel}</strong> rinde más que la inflación real acumulada de tu simulación. Estás logrando proteger tu patrimonio e incrementar de forma real tu poder de compra en un <strong>+{realRatePercent.toFixed(1)}%</strong>.
+                                  </p>
+                                ) : (
+                                  <p>
+                                    <strong>⚠️ Alerta de devaluación:</strong> Aunque tu inversión en <strong>{fundLabel}</strong> creció nominalmente un <strong>{((finalNominal / realGainCapital - 1) * 100).toFixed(1)}%</strong>, la inflación real acumulada fue del <strong>{(accumulatedInflation * 100).toFixed(1)}%</strong>. Esto significa que tu dinero perdió un <strong>{Math.abs(realRatePercent).toFixed(1)}%</strong> de poder adquisitivo neto. Considerá diversificar en instrumentos que den tasas reales positivas, activos indexados por UVA, u opciones en dólares como CEDEARs.
+                                  </p>
+                                )}
+                              </div>
+
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
                 </motion.div>
               )}
 
@@ -1909,7 +2742,14 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                           <Sparkles className="w-5 h-5 text-amber-400 animate-spin" />
                         </div>
                         <div>
-                          <h3 className="text-sm font-black animate-blink-gold-text">Asesor IA Invert-Play</h3>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-black animate-blink-gold-text">Asesor IA Invert-Play</h3>
+                            {isFallbackMode && (
+                              <span className="bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[9px] px-2 py-0.5 rounded-full font-bold animate-pulse">
+                                Contingencia Activa
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-zinc-400">Contextualizado con tus metas, capital y cotizaciones actuales.</p>
                         </div>
                       </div>
@@ -1922,6 +2762,31 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                         <span className="text-zinc-500">Riesgo:</span>
                         <span className="text-emerald-400 font-semibold uppercase">{userProfile.riskProfile}</span>
                       </div>
+                    </div>
+
+                    {/* Special Guide for retirees and low incomes banner */}
+                    <div className="bg-gradient-to-r from-amber-500/10 to-emerald-500/10 border border-amber-500/20 rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                      <div className="flex gap-3">
+                        <div className="bg-amber-500/20 p-2 rounded-lg text-amber-400 self-start sm:self-center">
+                          <Wallet className="w-5 h-5" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                            👵🏽 Especial: Guía para Jubilados e Ingresos Mínimos
+                          </span>
+                          <span className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                            ¿Cómo optimizar haberes mínimos o jubilaciones bajas usando billeteras con rendimiento diario (rescate inmediato) y sin congelar tu dinero?
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleSendMessage("Soy jubilado o cobro un sueldo mínimo en Argentina. ¿Cómo puedo lograr mayor rendimiento con rescate inmediato sin congelar mi dinero en plazos fijos?")}
+                        disabled={chatLoading}
+                        className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs py-1.5 px-3.5 rounded-lg transition shrink-0 flex items-center justify-center gap-1 disabled:opacity-50"
+                      >
+                        Ver Estrategia
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
                     {/* Chat Messages Container */}
@@ -2425,6 +3290,41 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                 )}
               </div>
             </div>
+
+            {/* Live Events Stream */}
+            <div className="border-t border-zinc-800/80 pt-3 flex flex-col gap-2">
+              <span className="text-[10px] font-black text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                Mixpanel Live Event Stream
+              </span>
+              <p className="text-[9px] text-zinc-500 leading-normal">
+                Mira en tiempo real los eventos de métricas gratuitas registrados mientras interactúas:
+              </p>
+              
+              {mixpanelEvents.length === 0 ? (
+                <div className="text-center py-4 bg-zinc-950/40 rounded-xl border border-zinc-850/60 text-zinc-600 text-[10px] font-mono">
+                  [Esperando interacciones...]
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1 scrollbar-none">
+                  {mixpanelEvents.map(evt => (
+                    <div key={evt.id} className="bg-zinc-950/60 border border-zinc-850/50 p-2 rounded-lg flex flex-col gap-0.5 text-[10px] font-mono hover:border-purple-500/20 transition">
+                      <div className="flex justify-between text-[9px]">
+                        <span className="text-purple-400 font-bold font-sans">⚡ {evt.eventName}</span>
+                        <span className="text-zinc-600">{evt.timestamp}</span>
+                      </div>
+                      <div className="text-[8px] text-zinc-500 leading-relaxed truncate" title={JSON.stringify(evt.properties)}>
+                        {Object.entries(evt.properties || {})
+                          .filter(([k]) => !["url", "referrer", "timestamp"].includes(k))
+                          .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+                          .join(", ") || "[Sin propiedades extra]"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
 
         </section>
@@ -2445,60 +3345,129 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
         </div>
       </footer>
 
-      {/* Toast Notification for High Inflation */}
-      <AnimatePresence>
-        {showInflationToast && !dismissedInflationToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-zinc-950 border-2 border-red-500/50 rounded-2xl shadow-2xl p-4 flex flex-col gap-3"
-          >
-            <div className="flex items-start gap-3">
-              <div className="bg-red-500/15 p-2 rounded-xl border border-red-500/20 text-red-400 shrink-0 mt-0.5 animate-pulse">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-xs font-black text-red-400 uppercase tracking-wider">
-                    ¡Alerta de Alta Inflación!
-                  </h4>
+      {/* Toast Notification Stack (Bottom-Right) */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        <AnimatePresence>
+          {/* Toast Notification for High Inflation */}
+          {showInflationToast && !dismissedInflationToast && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              className="pointer-events-auto w-full bg-zinc-950 border-2 border-red-500/50 rounded-2xl shadow-2xl p-4 flex flex-col gap-3"
+            >
+              <div className="flex items-start gap-3">
+                <div className="bg-red-500/15 p-2 rounded-xl border border-red-500/20 text-red-400 shrink-0 mt-0.5 animate-pulse">
+                  <AlertTriangle className="w-5 h-5" />
                 </div>
-                <p className="text-[11px] text-zinc-300 leading-relaxed mt-1">
-                  La tasa mensual de <strong className="text-white font-bold font-mono">{currentInflation.toFixed(1)}%</strong> supera el límite crítico de <strong className="text-white font-bold">5.0%</strong>. El dinero inactivo pierde poder de compra drásticamente.
-                </p>
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-black text-red-400 uppercase tracking-wider">
+                      ¡Alerta de Alta Inflación!
+                    </h4>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 leading-relaxed mt-1">
+                    La tasa mensual de <strong className="text-white font-bold font-mono">{currentInflation.toFixed(1)}%</strong> supera el límite crítico de <strong className="text-white font-bold">5.0%</strong>. El dinero inactivo pierde poder de compra drásticamente.
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <div className="bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800 flex flex-col gap-1 text-[10px] text-zinc-400">
-              <span className="font-extrabold text-red-400 uppercase tracking-wide">💡 Recomendación de cobertura:</span>
-              <span>Priorizá instrumentos protegidos contra inflación (ej. UVA), CEDEARs dolarizados, ONs corporativas o criptomonedas.</span>
-            </div>
+              <div className="bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800 flex flex-col gap-1 text-[10px] text-zinc-400">
+                <span className="font-extrabold text-red-400 uppercase tracking-wide">💡 Recomendación de cobertura:</span>
+                <span>Priorizá instrumentos protegidos contra inflación (ej. UVA), CEDEARs dolarizados, ONs corporativas o criptomonedas.</span>
+              </div>
 
-            <div className="flex justify-end gap-2 mt-1">
-              <button
-                onClick={() => {
-                  setDismissedInflationToast(true);
-                  trackEvent("Inflation Toast Dismissed", { rate: currentInflation });
-                }}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white font-bold rounded-lg text-[10px] border border-zinc-800 transition"
-              >
-                Ignorar
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("simulator");
-                  setDismissedInflationToast(true);
-                  trackEvent("Inflation Toast Recommendation Clicked");
-                }}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-[10px] transition shadow-md shadow-red-500/20"
-              >
-                Ver Coberturas 📈
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <div className="flex justify-end gap-2 mt-1">
+                <button
+                  onClick={() => {
+                    setDismissedInflationToast(true);
+                    trackEvent("Inflation Toast Dismissed", { rate: currentInflation });
+                  }}
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white font-bold rounded-lg text-[10px] border border-zinc-800 transition"
+                >
+                  Ignorar
+                </button>
+                <button
+                  onClick={() => {
+                    setActiveTab("simulator");
+                    setDismissedInflationToast(true);
+                    trackEvent("Inflation Toast Recommendation Clicked");
+                  }}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg text-[10px] transition shadow-md shadow-red-500/20"
+                >
+                  Ver Coberturas 📈
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Price Alerts and Volatility Toasts */}
+          {activeToasts.map((toast) => (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: 30, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              className="pointer-events-auto w-full bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl p-4 flex flex-col gap-2.5 relative overflow-hidden group border-l-4"
+              style={{
+                borderLeftColor: toast.type === "target_price" ? "#6366f1" : (toast.change && toast.change >= 0 ? "#10b981" : "#ef4444")
+              }}
+            >
+              {/* Subtle background overlay */}
+              <div className="absolute inset-0 bg-gradient-to-br from-zinc-900/40 to-transparent pointer-events-none" />
+              
+              <div className="flex items-start justify-between gap-2 relative z-10">
+                <div className="flex items-start gap-2.5">
+                  <div className={`p-2 rounded-xl border shrink-0 mt-0.5 ${
+                    toast.type === "target_price" 
+                      ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-400" 
+                      : (toast.change && toast.change >= 0 
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+                        : "bg-red-500/10 border-red-500/20 text-red-400")
+                  }`}>
+                    {toast.type === "target_price" ? (
+                      <Bell className="w-4 h-4" />
+                    ) : (
+                      <Activity className="w-4 h-4" />
+                    )}
+                  </div>
+                  
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`text-[10px] font-black uppercase tracking-wider ${
+                      toast.type === "target_price" 
+                        ? "text-indigo-400" 
+                        : (toast.change && toast.change >= 0 ? "text-emerald-400" : "text-red-400")
+                    }`}>
+                      {toast.title}
+                    </span>
+                    <p className="text-[11px] text-zinc-300 leading-relaxed mt-0.5">
+                      {toast.message}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => dismissToast(toast.id)}
+                  className="text-zinc-500 hover:text-zinc-300 text-sm font-bold p-1 leading-none transition"
+                >
+                  ×
+                </button>
+              </div>
+
+              {toast.symbol && (
+                <div className="flex items-center justify-between mt-0.5 bg-zinc-900/50 px-2.5 py-1.5 rounded-xl border border-zinc-900 relative z-10">
+                  <span className="text-[10px] text-zinc-400 font-mono">Instrumento: <strong className="text-white font-bold">{toast.symbol}</strong></span>
+                  {toast.change !== undefined && (
+                    <span className={`text-[10px] font-mono font-bold ${toast.change >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {toast.change >= 0 ? "+" : ""}{toast.change}%
+                    </span>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
 
     </div>
   );
