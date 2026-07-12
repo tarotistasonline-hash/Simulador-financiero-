@@ -34,6 +34,7 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
     );
   });
   const [hasError, setHasError] = useState(false);
+  const [isUnfilled, setIsUnfilled] = useState(false);
   const initialized = useRef(false);
   const insRef = useRef<HTMLElement>(null);
 
@@ -47,6 +48,8 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
       setClientId(updatedId);
       // Reset initialization status if the publisher ID changes
       initialized.current = false;
+      setIsUnfilled(false);
+      setHasError(false);
     };
 
     window.addEventListener("adsense-client-id-changed", handleUpdate);
@@ -71,10 +74,34 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
       script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${clientId}`;
       script.async = true;
       script.crossOrigin = "anonymous";
+      script.onerror = () => {
+        setHasError(true);
+      };
       document.head.appendChild(script);
     } else {
-      // If script is already loaded but client ID is updated, update the script src or keep going
       script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${clientId}`;
+      const prevOnError = script.onerror;
+      script.onerror = (ev) => {
+        if (prevOnError) (prevOnError as any)(ev);
+        setHasError(true);
+      };
+    }
+
+    // Set up MutationObserver to detect if the ad is "unfilled"
+    const insElement = insRef.current;
+    let observer: MutationObserver | null = null;
+    if (insElement) {
+      observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+          if (mutation.type === "attributes" && mutation.attributeName === "data-ad-status") {
+            const status = insElement.getAttribute("data-ad-status");
+            if (status === "unfilled") {
+              setIsUnfilled(true);
+            }
+          }
+        });
+      });
+      observer.observe(insElement, { attributes: true });
     }
 
     let checkInterval: any;
@@ -82,11 +109,11 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
 
     const tryPush = () => {
       attempts++;
-      const insElement = insRef.current;
+      const currentIns = insRef.current;
       
       // Wait until the browser layout has calculated a positive, visible width
       // This perfectly prevents the "No slot size for availableWidth=0" error
-      if (insElement && insElement.offsetWidth > 0) {
+      if (currentIns && currentIns.offsetWidth > 0) {
         try {
           if (!initialized.current) {
             const windowWithAds = window as any;
@@ -110,6 +137,7 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
 
     return () => {
       if (checkInterval) clearTimeout(checkInterval);
+      if (observer) observer.disconnect();
     };
   }, [clientId]);
 
@@ -136,35 +164,9 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
     ...style,
   };
 
-  // If there's no client ID configured, render a premium elegant placeholder in development/demo mode
-  if (!clientId) {
-    return (
-      <div 
-        className={`bg-zinc-950/60 border border-dashed border-zinc-800 rounded-xl p-4 flex flex-col items-center justify-center text-center transition min-h-[100px] select-none ${className}`}
-        style={style}
-      >
-        <div className="flex items-center gap-2 text-zinc-500 text-xs font-semibold mb-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-indigo-500/60 animate-pulse" />
-          <span>Espacio Publicitario Google AdSense</span>
-        </div>
-        <p className="text-[10px] text-zinc-400 max-w-md">
-          Para activar los anuncios reales, puedes ingresar tu ID de editor (ej. <code className="text-amber-400 font-mono">ca-pub-XXXXXXXXXXXXXXXX</code>) en la constante <code className="text-indigo-400 font-mono">DIRECT_ADSENSE_CLIENT_ID</code> dentro del archivo de este componente, o pegarlo en el panel de Secrets como <code className="text-amber-400 font-mono">VITE_ADSENSE_CLIENT_ID</code>. ¡También puedes pasármelo por el chat y yo lo coloco por vos!
-        </p>
-        {slot && (
-          <span className="mt-1.5 text-[8px] font-mono text-zinc-600 uppercase tracking-widest">
-            Ad Slot ID: {slot} • Format: {format}
-          </span>
-        )}
-      </div>
-    );
-  }
-
-  if (hasError) {
-    return (
-      <div className="text-center p-2 text-xs text-zinc-500 italic">
-        Anuncio de AdSense (bloqueado o no disponible)
-      </div>
-    );
+  // If there's no client ID configured, or if there is an error/unfilled state, return null to avoid taking up any space
+  if (!clientId || hasError || isUnfilled) {
+    return null;
   }
 
   return (

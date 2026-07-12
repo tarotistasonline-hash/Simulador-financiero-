@@ -2919,9 +2919,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
         </section>
 
         {/* Google AdSense Banner Slot */}
-        <section className="lg:col-span-12 mt-4">
-          <AdSenseBanner slot="banner-home-bottom" format="horizontal" />
-        </section>
+        <AdSenseBanner slot="banner-home-bottom" format="horizontal" className="lg:col-span-12 mt-4" />
 
         {/* Guestbook & Visitor Counter (Full Width Section) */}
         <section id="visitas-seccion" className="lg:col-span-12 border-t border-zinc-800/80 pt-8 mt-4 flex flex-col md:flex-row gap-6">
