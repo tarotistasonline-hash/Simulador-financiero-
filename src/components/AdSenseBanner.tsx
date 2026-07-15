@@ -135,28 +135,33 @@ export const AdSenseBanner: React.FC<AdSenseBannerProps> = ({
 
     tryPush();
 
+    // Liveness check: If after 3.5 seconds there is no iframe or children inside <ins>,
+    // collapse the component to avoid leaving an empty white space.
+    const livenessTimeout = setTimeout(() => {
+      const currentIns = insRef.current;
+      if (currentIns) {
+        const hasIframe = currentIns.querySelector("iframe") !== null;
+        const hasChildren = currentIns.children.length > 0;
+        if (!hasIframe && !hasChildren) {
+          setIsUnfilled(true);
+        }
+      }
+    }, 3500);
+
     return () => {
       if (checkInterval) clearTimeout(checkInterval);
+      clearTimeout(livenessTimeout);
       if (observer) observer.disconnect();
     };
   }, [clientId]);
 
-  // Setup sensible default minimum dimensions depending on format to facilitate non-zero layout sizes
+  // Setup sensible default style. We remove fixed minimum dimensions so that the component collapses to 0 height if unfilled, preventing any empty blank spaces.
   const getContainerStyle = (): React.CSSProperties => {
-    const baseStyle: React.CSSProperties = {
+    return {
       display: "block",
       overflow: "hidden",
+      width: "100%",
     };
-    if (format === "vertical") {
-      return { ...baseStyle, minWidth: "120px", minHeight: "250px" };
-    }
-    if (format === "horizontal") {
-      return { ...baseStyle, minWidth: "250px", minHeight: "90px" };
-    }
-    if (format === "rectangle") {
-      return { ...baseStyle, minWidth: "250px", minHeight: "250px" };
-    }
-    return { ...baseStyle, minWidth: "250px", minHeight: "50px" };
   };
 
   const combinedStyle = {

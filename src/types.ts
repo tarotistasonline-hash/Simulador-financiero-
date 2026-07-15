@@ -82,4 +82,5 @@ export interface SimulationResult {
   "Suma Invertida": number;
   "Retorno Proyectado": number;
   "Pérdida por Inflación (Efectivo)": number;
+  "Promedio de Mercado"?: number;
 }

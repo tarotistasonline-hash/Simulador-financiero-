@@ -92,6 +92,7 @@ export default function App() {
   const [simPeriod, setSimPeriod] = useState<number>(12); // months
   const [customAllocations, setCustomAllocations] = useState<{ [key: string]: number }>({});
   const [isCustomizingAllocation, setIsCustomizingAllocation] = useState<boolean>(false);
+  const [compareMarketAverage, setCompareMarketAverage] = useState<boolean>(false);
 
   // Chat states
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -926,6 +927,13 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
     const chartData: SimulationResult[] = [];
     const monthlyInflationRate = currentInflation / 100; // Dynamic monthly inflation
 
+    const marketAverageAllocation = [
+      { instrumentName: "SPY", percentage: 35 },
+      { instrumentName: "FCI Money Market (Mercado Pago / Ualá)", percentage: 25 },
+      { instrumentName: "Plazo Fijo Tradicional", percentage: 20 },
+      { instrumentName: "Obligaciones Negociables (ONs)", percentage: 20 }
+    ];
+
     for (let month = 0; month <= simPeriod; month++) {
       let investedSum = userProfile.capital;
       let portfolioValue = userProfile.capital;
@@ -945,12 +953,28 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
       const purchasingPower = userProfile.capital / Math.pow(1 + monthlyInflationRate, month);
       const inflationLoss = userProfile.capital - purchasingPower;
 
-      chartData.push({
+      const dataPoint: SimulationResult = {
         month,
         "Suma Invertida": Math.round(investedSum),
         "Retorno Proyectado": Math.round(portfolioValue),
         "Pérdida por Inflación (Efectivo)": Math.round(purchasingPower)
-      });
+      };
+
+      if (compareMarketAverage) {
+        let marketAvgVal = userProfile.capital;
+        if (month > 0) {
+          marketAvgVal = marketAverageAllocation.reduce((total, alloc) => {
+            const amount = (userProfile.capital * alloc.percentage) / 100;
+            const yieldRate = getAnnualYield(alloc.instrumentName);
+            const monthlyRate = Math.pow(1 + yieldRate, 1 / 12) - 1;
+            const currentVal = amount * Math.pow(1 + monthlyRate, month);
+            return total + currentVal;
+          }, 0);
+        }
+        dataPoint["Promedio de Mercado"] = Math.round(marketAvgVal);
+      }
+
+      chartData.push(dataPoint);
     }
     return chartData;
   };
@@ -2216,10 +2240,34 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
                   {/* Recharts Chart Area */}
                   <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-                    <div>
-                      <h4 className="text-sm font-semibold text-white">Trayectoria Proyectada del Capital</h4>
-                      <p className="text-[11px] text-zinc-400">Comparativa del valor real entre tu Portafolio Diversificado vs Efectivo (Ajustado por Inflación).</p>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-zinc-800/60">
+                      <div>
+                        <h4 className="text-sm font-semibold text-white">Trayectoria Proyectada del Capital</h4>
+                        <p className="text-[11px] text-zinc-400">Comparativa del valor real entre tu Portafolio Diversificado vs Efectivo (Ajustado por Inflación).</p>
+                      </div>
+
+                      {/* Comparison Toggle */}
+                      <button
+                        onClick={() => {
+                          setCompareMarketAverage(!compareMarketAverage);
+                          trackEvent("toggle_compare_market_average", { enabled: !compareMarketAverage });
+                        }}
+                        className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-bold transition duration-200 select-none cursor-pointer self-start md:self-auto ${
+                          compareMarketAverage
+                            ? "bg-blue-500/10 border-blue-500/40 text-blue-400 hover:bg-blue-500/15"
+                            : "bg-zinc-950/60 border-zinc-800 text-zinc-400 hover:text-zinc-300 hover:border-zinc-700"
+                        }`}
+                      >
+                        <span className={`w-2.5 h-2.5 rounded-full ${compareMarketAverage ? "bg-blue-500 animate-pulse" : "bg-zinc-600"}`} />
+                        <span>Comparar con Promedio de Mercado</span>
+                      </button>
                     </div>
+
+                    {compareMarketAverage && (
+                      <div className="bg-blue-500/5 border border-blue-500/10 rounded-xl p-3 text-[11px] text-blue-300/90 leading-relaxed">
+                        💡 <strong>Promedio de Mercado (Benchmark):</strong> Es una asignación diversificada estándar compuesta por <strong>SPY (35%)</strong>, <strong>Money Market (25%)</strong>, <strong>Plazo Fijo Tradicional (20%)</strong> y <strong>Obligaciones Negociables (20%)</strong> para evaluar la efectividad de tu portafolio personalizado.
+                      </div>
+                    )}
 
                     <div className="h-72 w-full mt-2">
                       <ResponsiveContainer width="100%" height="100%">
@@ -2235,6 +2283,10 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             <linearGradient id="colorEfectivo" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="#f87171" stopOpacity={0.1}/>
                               <stop offset="95%" stopColor="#f87171" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorMarketAverage" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15}/>
+                              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
@@ -2265,6 +2317,18 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             fillOpacity={1} 
                             fill="url(#colorPortfolio)" 
                           />
+                          {compareMarketAverage && (
+                            <Area 
+                              name="Promedio de Mercado (Benchmark)" 
+                              type="monotone" 
+                              dataKey="Promedio de Mercado" 
+                              stroke="#3b82f6" 
+                              strokeWidth={2}
+                              strokeDasharray="4 4"
+                              fillOpacity={1} 
+                              fill="url(#colorMarketAverage)" 
+                            />
+                          )}
                           <Area 
                             name="Efectivo en mano (Poder de Compra)" 
                             type="monotone" 
@@ -3090,121 +3154,6 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
               </a>
             </div>
 
-          </div>
-
-          {/* AdSense Configuration Card */}
-          <div className="w-full md:w-[320px] bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-            <div className="pb-2 border-b border-zinc-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Percent className="w-4 h-4 text-orange-400 animate-pulse" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Monetización</h3>
-              </div>
-              <span className="text-[9px] bg-orange-500/15 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full font-semibold uppercase">
-                AdSense
-              </span>
-            </div>
-
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Ingresá tu ID de editor de Google AdSense para activar los banners publicitarios dinámicamente en el simulador.
-            </p>
-
-            <form onSubmit={handleSaveAdSenseId} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
-                  ID de Editor (Publisher ID)
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={adsenseId}
-                    onChange={(e) => setAdsenseId(e.target.value)}
-                    placeholder="Ej: ca-pub-1234567890123456"
-                    className={`w-full bg-zinc-950 border focus:outline-none transition font-mono placeholder:text-zinc-600 rounded-xl pl-3 pr-8 py-2 text-xs text-white ${
-                      isAdsenseIdInvalid
-                        ? "border-red-500/50 focus:border-red-500"
-                        : "border-zinc-800 focus:border-orange-500/60"
-                    }`}
-                  />
-                  {adsenseId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAdsenseId("");
-                        localStorage.removeItem("adsense_publisher_id");
-                        window.dispatchEvent(new Event("adsense-client-id-changed"));
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs px-1 font-bold"
-                      title="Limpiar ID"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-                {adsenseId.trim().startsWith("pub-") && (
-                  <p className="text-[10px] text-amber-400 font-bold mt-1 flex items-center gap-1">
-                    ✨ ID con "pub-" detectado. Lo convertiremos automáticamente a "ca-pub-" al guardar.
-                  </p>
-                )}
-                {adsenseId.trim().startsWith("pub") && !adsenseId.trim().startsWith("pub-") && /^\d+$/.test(adsenseId.trim().slice(3)) && (
-                  <p className="text-[10px] text-amber-400 font-bold mt-1 flex items-center gap-1">
-                    ✨ ID con "pub" detectado. Lo convertiremos automáticamente a "ca-pub-" al guardar.
-                  </p>
-                )}
-                {/^\d+$/.test(adsenseId.trim()) && adsenseId.trim().length > 0 && (
-                  <p className="text-[10px] text-amber-400 font-bold mt-1 flex items-center gap-1">
-                    ✨ ID numérico detectado. Se formateará automáticamente como "ca-pub-" al guardar.
-                  </p>
-                )}
-                {isAdsenseIdInvalid && (
-                  <p className="text-[10px] text-red-400 font-bold mt-1 flex items-center gap-1 animate-pulse">
-                    ⚠️ El ID de AdSense debe comenzar con "ca-pub-", "pub-" o ser solo números (ej: pub-1234567890123456)
-                  </p>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={isAdsenseIdInvalid || !adsenseId.trim()}
-                className="w-full bg-orange-500 hover:bg-orange-400 text-zinc-950 disabled:bg-zinc-800/80 disabled:text-zinc-500 disabled:cursor-not-allowed font-extrabold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/10 active:scale-[0.98]"
-              >
-                <span>Aplicar y Activar Ads 🚀</span>
-              </button>
-            </form>
-
-            {adsenseSaved && (
-              <div className="text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5 animate-bounce">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                <span>¡ID guardado y activado con éxito!</span>
-              </div>
-            )}
-
-            {/* Persistent status info block */}
-            <div className="text-[10px] text-zinc-500 leading-normal bg-zinc-950/40 p-3 rounded-xl border border-zinc-850 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-400 font-bold">Estado actual:</span>
-                {localStorage.getItem("adsense_publisher_id") ? (
-                  <span className="text-emerald-400 font-extrabold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-md text-[9px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    ACTIVO
-                  </span>
-                ) : (
-                  <span className="text-amber-400 font-extrabold flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-md text-[9px]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    MODO DEMO
-                  </span>
-                )}
-              </div>
-              {localStorage.getItem("adsense_publisher_id") && (
-                <div className="text-[9px] font-mono text-zinc-400 break-all bg-zinc-950/60 p-1.5 rounded border border-zinc-900 flex justify-between items-center">
-                  <span>{localStorage.getItem("adsense_publisher_id")}</span>
-                  <span className="text-[8px] text-emerald-500 font-extrabold uppercase">Activo</span>
-                </div>
-              )}
-            </div>
-
-            <div className="text-[9px] text-zinc-500 leading-normal bg-zinc-950/40 p-2.5 rounded-xl border border-zinc-850">
-              <span className="text-zinc-400 font-bold">Nota:</span> Podés ingresar tu ID comenzando con <code className="text-amber-400 font-mono">pub-</code> o simplemente el número. El simulador lo convertirá automáticamente a <code className="text-emerald-400 font-mono">ca-pub-</code> para que Google AdSense funcione correctamente.
-            </div>
           </div>
 
           {/* Mixpanel Configuration Card */}
