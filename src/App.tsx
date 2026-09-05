@@ -24,6 +24,7 @@ import {
   CheckCircle2, 
   Info, 
   Wallet,
+  CreditCard,
   ChevronRight,
   ChevronDown,
   ChevronUp,
@@ -32,7 +33,15 @@ import {
   Trash2,
   Volume2,
   VolumeX,
-  Activity
+  Activity,
+  PieChart as PieChartIcon,
+  Crown,
+  EyeOff,
+  Eye,
+  Users,
+  RotateCcw,
+  Smartphone,
+  Laptop
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -43,7 +52,10 @@ import {
   CartesianGrid, 
   Tooltip, 
   Legend, 
-  ResponsiveContainer 
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell
 } from "recharts";
 import { 
   FinancialRates, 
@@ -58,7 +70,7 @@ import {
   FixedIncomeInstrument
 } from "./types";
 import { AdSenseBanner } from "./components/AdSenseBanner";
-import { initMixpanel, trackEvent } from "./lib/analytics";
+import { trackEvent } from "./lib/analytics";
 
 export interface NewsItem {
   title: string;
@@ -67,6 +79,28 @@ export interface NewsItem {
   source: string;
   date: string;
 }
+
+const ASSET_COLORS: { [key: string]: string } = {
+  "Plazo Fijo Tradicional": "#3b82f6",
+  "Plazo Fijo UVA": "#06b6d4",
+  "FCI Money Market (Mercado Pago / Ualá)": "#10b981",
+  "Obligaciones Negociables (ONs)": "#f59e0b",
+  "SPY": "#8b5cf6",
+  "AAPL": "#6366f1",
+  "TSLA": "#ec4899",
+  "MELI": "#eab308",
+  "MSFT": "#0284c7",
+  "NVDA": "#22c55e",
+  "GGAL": "#a855f7",
+  "YPFD": "#f97316",
+  "BTC": "#f7931a",
+  "ETH": "#627eea",
+};
+
+const FALLBACK_PIE_COLORS = [
+  "#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ec4899", 
+  "#06b6d4", "#f97316", "#a855f7", "#eab308", "#14b8a6"
+];
 
 export default function App() {
   // Global States
@@ -85,6 +119,8 @@ export default function App() {
     goals: "Quiero ganarle a la inflación y mantener mi capital dolarizado o invertido en empresas sólidas de tecnología."
   });
 
+  const [localCapital, setLocalCapital] = useState<string>("1000000");
+
   const [activeTab, setActiveTab] = useState<"rates" | "simulator" | "calculator" | "advisor">("rates");
   
   // Tab-specific states
@@ -101,8 +137,10 @@ export default function App() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [isFallbackMode, setIsFallbackMode] = useState<boolean>(false);
 
-  // Calculator states
+  // Calculator states (Inflation Cost)
+  const [calcCurrency, setCalcCurrency] = useState<"ARS" | "USD">("ARS");
   const [calcPesos, setCalcPesos] = useState<number>(500000);
+  const [calcDollars, setCalcDollars] = useState<number>(1000);
   const [calcMonths, setCalcMonths] = useState<number>(6);
 
   // Real Gain (Ganancia Real) Calculator States
@@ -111,8 +149,26 @@ export default function App() {
   const [realGainCustomTna, setRealGainCustomTna] = useState<number>(45);
   const [realGainMonths, setRealGainMonths] = useState<number>(6);
 
-  // Guestbook and Visitor states
-  const [visitorCount, setVisitorCount] = useState<number>(2458);
+  // Real Visitor states (No fake seeds; supports excluding owner visits)
+  const [visitorCount, setVisitorCount] = useState<number>(0);
+  const [uniqueUsers, setUniqueUsers] = useState<number>(0);
+  const [activeNow, setActiveNow] = useState<number>(0);
+  const [todayVisits, setTodayVisits] = useState<number>(0);
+  const [recentVisits, setRecentVisits] = useState<Array<{ timestamp: string; deviceType: string; tab?: string }>>([]);
+  const [isOwnerMode, setIsOwnerMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("invertplay_owner_mode");
+      if (saved !== null) return saved === "true";
+      return typeof window !== "undefined" && (
+        window.location.hostname.includes("ais-dev") ||
+        window.location.hostname.includes("localhost") ||
+        window.location.hostname === "127.0.0.1" ||
+        window.self !== window.top
+      );
+    } catch {
+      return true;
+    }
+  });
   const [guestName, setGuestName] = useState<string>("");
   const [guestProfile, setGuestProfile] = useState<RiskProfile>("moderado");
   const [guestComment, setGuestComment] = useState<string>("");
@@ -163,10 +219,6 @@ export default function App() {
     return true;
   })();
 
-  // Mixpanel dynamic configuration states
-  const [mixpanelToken, setMixpanelToken] = useState<string>(() => localStorage.getItem("mixpanel_project_token") || "");
-  const [mixpanelSaved, setMixpanelSaved] = useState<boolean>(false);
-
   // --- PRICE ALERTS & NOTIFICATIONS SYSTEM STATES ---
   interface PriceAlert {
     id: string;
@@ -181,20 +233,13 @@ export default function App() {
 
   interface VisualToast {
     id: string;
-    type: "volatility" | "target_price" | "mixpanel_event";
+    type: "volatility" | "target_price" | "system_event";
     title: string;
     message: string;
     symbol?: string;
     change?: number;
     timestamp: string;
     isCustomAlert?: boolean;
-  }
-
-  interface MixpanelLiveEvent {
-    id: string;
-    eventName: string;
-    properties: any;
-    timestamp: string;
   }
 
   const [priceAlerts, setPriceAlerts] = useState<PriceAlert[]>(() => {
@@ -211,8 +256,6 @@ export default function App() {
     const saved = localStorage.getItem("invertplay_sound_enabled");
     return saved !== "false"; // default true
   });
-
-  const [mixpanelEvents, setMixpanelEvents] = useState<MixpanelLiveEvent[]>([]);
 
   // Web Audio API Synthesizer - plays a beautiful chord arpeggio for notifications
   const playAlertChime = () => {
@@ -274,32 +317,12 @@ export default function App() {
     localStorage.setItem("invertplay_sound_enabled", String(soundEnabled));
   }, [soundEnabled]);
 
-  // Listen to Mixpanel events tracked in real-time
-  useEffect(() => {
-    const handleMixpanelEvent = (e: any) => {
-      if (e.detail) {
-        const newEvent: MixpanelLiveEvent = {
-          id: Math.random().toString(36).substring(2, 9),
-          eventName: e.detail.eventName,
-          properties: e.detail.properties,
-          timestamp: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-        };
-        setMixpanelEvents(prev => [newEvent, ...prev].slice(0, 15)); // Keep last 15
-      }
-    };
-
-    window.addEventListener("mixpanel-event-tracked", handleMixpanelEvent);
-    return () => {
-      window.removeEventListener("mixpanel-event-tracked", handleMixpanelEvent);
-    };
-  }, []);
-
   // Inflation warning and simulation states
   const [customInflation, setCustomInflation] = useState<number | null>(null);
   const [showInflationToast, setShowInflationToast] = useState<boolean>(false);
   const [dismissedInflationToast, setDismissedInflationToast] = useState<boolean>(false);
 
-  const currentInflation = customInflation !== null ? customInflation : (rates?.macroeconomics.monthlyInflation ?? 4.1);
+  const currentInflation = customInflation !== null ? customInflation : (rates?.macroeconomics.monthlyInflation ?? 2.2);
 
   useEffect(() => {
     if (currentInflation > 5) {
@@ -338,29 +361,99 @@ export default function App() {
     }, 3000);
   };
 
-  const handleSaveMixpanelToken = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanToken = mixpanelToken.trim();
-    localStorage.setItem("mixpanel_project_token", cleanToken);
-    setMixpanelToken(cleanToken);
-    setMixpanelSaved(true);
-    // Dispatch custom event to notify mixpanel instance
-    window.dispatchEvent(new Event("mixpanel-token-changed"));
-    trackEvent("Mixpanel Token Configured", { tokenProvided: !!cleanToken });
-    setTimeout(() => {
-      setMixpanelSaved(false);
-    }, 3000);
+  const handleToggleOwnerMode = async (newVal: boolean) => {
+    setIsOwnerMode(newVal);
+    localStorage.setItem("invertplay_owner_mode", newVal ? "true" : "false");
+    const clientId = localStorage.getItem("invertplay_client_id") || "client_default";
+    try {
+      const res = await fetch("/api/visitors", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "x-is-owner": newVal ? "true" : "false"
+        },
+        body: JSON.stringify({ clientId, isOwner: newVal, isNewVisit: false })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.totalVisits === "number") setVisitorCount(data.totalVisits);
+        if (typeof data.uniqueUsers === "number") setUniqueUsers(data.uniqueUsers);
+        if (typeof data.activeNow === "number") setActiveNow(data.activeNow);
+        if (typeof data.todayVisits === "number") setTodayVisits(data.todayVisits);
+        if (Array.isArray(data.recentVisits)) setRecentVisits(data.recentVisits);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleResetRealVisitorCount = async () => {
+    if (!window.confirm("¿Confirmas que deseas reiniciar el contador de visitas reales a 0?")) return;
+    try {
+      const res = await fetch("/api/visitors/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-is-owner": "true" },
+        body: JSON.stringify({ isOwner: true })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVisitorCount(0);
+        setUniqueUsers(0);
+        setTodayVisits(0);
+        setActiveNow(0);
+        setRecentVisits([]);
+        localStorage.setItem("invertplay_visitors", "0");
+        localStorage.setItem("invertplay_unique_users", "0");
+      }
+    } catch (e) {
+      console.error("Error al reiniciar contador:", e);
+    }
+  };
+
+  const handleManualVisitPulse = async () => {
+    // Allows testing the real counter as if a new external visitor just entered
+    const simulatedClientId = "visitor_test_" + Math.random().toString(36).substring(2, 7);
+    try {
+      const res = await fetch("/api/visitors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          clientId: simulatedClientId, 
+          isOwner: false, 
+          isNewVisit: true,
+          deviceType: Math.random() > 0.5 ? "Móvil" : "Escritorio",
+          tab: activeTab
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setVisitorCount(data.totalVisits);
+        if (typeof data.uniqueUsers === "number") setUniqueUsers(data.uniqueUsers);
+        if (typeof data.activeNow === "number") setActiveNow(data.activeNow);
+        if (typeof data.todayVisits === "number") setTodayVisits(data.todayVisits);
+        if (Array.isArray(data.recentVisits)) setRecentVisits(data.recentVisits);
+      }
+    } catch (err) {
+      console.error("Error pulse visit:", err);
+    }
   };
 
   useEffect(() => {
     trackEvent("Tab Changed", { tab: activeTab });
   }, [activeTab]);
 
+  useEffect(() => {
+    // Sync local capital text representation with the actual profile value
+    if (parseFloat(localCapital) !== userProfile.capital) {
+      setLocalCapital(userProfile.capital.toString());
+    }
+  }, [userProfile.capital]);
+
   // Fetch rates on component mount
-  const fetchRates = async () => {
+  const fetchRates = async (force = false) => {
     try {
       setLoadingRates(true);
-      const res = await fetch("/api/rates");
+      const res = await fetch(`/api/rates${force ? "?force=true" : ""}`);
       if (!res.ok) throw new Error("No se pudieron cargar las cotizaciones del servidor.");
       const data = await res.json();
       setRates(data);
@@ -588,96 +681,137 @@ export default function App() {
   };
 
   useEffect(() => {
-    initMixpanel();
     fetchRates();
     fetchNews();
   }, []);
 
   useEffect(() => {
-    // Persistent server-backed visitor count
+    // Persistent server-backed real visitor count (excludes creator visits)
     let clientId = localStorage.getItem("invertplay_client_id");
     if (!clientId) {
       clientId = "client_" + Math.random().toString(36).substring(2, 15);
       localStorage.setItem("invertplay_client_id", clientId);
     }
 
+    // Clear legacy inflated seeds
+    const oldStored = localStorage.getItem("invertplay_visitors");
+    if (oldStored && parseInt(oldStored, 10) > 1000) {
+      localStorage.removeItem("invertplay_visitors");
+      localStorage.removeItem("invertplay_unique_users");
+    }
+
+    const deviceType = typeof window !== "undefined" && window.innerWidth < 768 ? "Móvil" : "Escritorio";
+
     const registerVisit = async () => {
       try {
         const res = await fetch("/api/visitors", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clientId })
+          headers: { 
+            "Content-Type": "application/json",
+            "x-is-owner": isOwnerMode ? "true" : "false"
+          },
+          body: JSON.stringify({ 
+            clientId, 
+            isOwner: isOwnerMode, 
+            isNewVisit: true,
+            deviceType,
+            tab: activeTab
+          })
         });
         if (res.ok) {
           const data = await res.json();
-          setVisitorCount(data.totalVisits);
-          trackEvent("App Loaded", { 
-            visitorCount: data.totalVisits,
-            uniqueUsers: data.uniqueUsers,
-            isNewUnique: !localStorage.getItem("invertplay_visitors_synced")
-          });
-          localStorage.setItem("invertplay_visitors_synced", "true");
-        } else {
-          // Fallback if API fails
-          const storedCount = localStorage.getItem("invertplay_visitors");
-          let currentCount = 2458;
-          if (storedCount) {
-            currentCount = parseInt(storedCount, 10) + 1;
-          }
-          setVisitorCount(currentCount);
-          trackEvent("App Loaded", { visitorCount: currentCount });
+          setVisitorCount(data.totalVisits ?? 0);
+          setUniqueUsers(data.uniqueUsers ?? 0);
+          setActiveNow(data.activeNow ?? 0);
+          if (typeof data.todayVisits === "number") setTodayVisits(data.todayVisits);
+          if (Array.isArray(data.recentVisits)) setRecentVisits(data.recentVisits);
+          localStorage.setItem("invertplay_visitors", (data.totalVisits ?? 0).toString());
+          localStorage.setItem("invertplay_unique_users", (data.uniqueUsers ?? 0).toString());
         }
       } catch (err) {
         console.error("Error registering visit:", err);
-        const storedCount = localStorage.getItem("invertplay_visitors");
-        let currentCount = 2458;
-        if (storedCount) {
-          currentCount = parseInt(storedCount, 10) + 1;
-        }
-        setVisitorCount(currentCount);
-        trackEvent("App Loaded", { visitorCount: currentCount });
       }
     };
 
     registerVisit();
 
-    // Guestbook entries persistence
-    const storedEntries = localStorage.getItem("invertplay_guestbook");
-    if (storedEntries) {
+    // Poll live visitor stats every 10 seconds to keep counter unfrozen
+    const pollInterval = setInterval(async () => {
       try {
-        setGuestbookEntries(JSON.parse(storedEntries));
-      } catch (e) {
-        console.error(e);
-      }
-    } else {
-      // Prefill with default educational posts
-      const defaults = [
-        {
-          id: "1",
-          name: "Santi_Inversor",
-          profile: "agresivo" as RiskProfile,
-          comment: "¡Excelente simulador educativo! Me sirvió para entender el impacto real de la inflación en mis pesos y cómo los CEDEARs ayudan a dolarizar la cartera.",
-          timestamp: "Hace 2 horas"
-        },
-        {
-          id: "2",
-          name: "Marta_Ahorros",
-          profile: "conservador" as RiskProfile,
-          comment: "Muy buena herramienta para la gente que recién arranca. El Plazo Fijo UVA vs el Tradicional es un debate eterno acá, y este gráfico lo explica impecable.",
-          timestamp: "Ayer"
-        },
-        {
-          id: "3",
-          name: "Lucas_G",
-          profile: "moderado" as RiskProfile,
-          comment: "Las Obligaciones Negociables son mi instrumento favorito y acá están re bien explicadas con sus tasas actualizadas. ¡Gracias por el simulador!",
-          timestamp: "Hace 2 días"
+        const res = await fetch(`/api/visitors?clientId=${encodeURIComponent(clientId)}&isOwner=${isOwnerMode ? "true" : "false"}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.totalVisits === "number") setVisitorCount(data.totalVisits);
+          if (typeof data.uniqueUsers === "number") setUniqueUsers(data.uniqueUsers);
+          if (typeof data.activeNow === "number") setActiveNow(data.activeNow);
+          if (typeof data.todayVisits === "number") setTodayVisits(data.todayVisits);
+          if (Array.isArray(data.recentVisits)) setRecentVisits(data.recentVisits);
         }
-      ];
-      setGuestbookEntries(defaults);
-      localStorage.setItem("invertplay_guestbook", JSON.stringify(defaults));
-    }
+      } catch (e) {
+        // Silent poll fallback
+      }
+    }, 10000);
+
+    // Heartbeat every 45s to maintain active server session
+    const heartbeatInterval = setInterval(async () => {
+      try {
+        await fetch("/api/visitors", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "x-is-owner": isOwnerMode ? "true" : "false"
+          },
+          body: JSON.stringify({ clientId, isOwner: isOwnerMode, isNewVisit: false, tab: activeTab })
+        });
+      } catch (e) {
+        // Ignore heartbeat error
+      }
+    }, 45000);
+
+    return () => {
+      clearInterval(pollInterval);
+      clearInterval(heartbeatInterval);
+    };
   }, []);
+
+    // Guestbook entries persistence
+    useEffect(() => {
+      const storedEntries = localStorage.getItem("invertplay_guestbook");
+      if (storedEntries) {
+        try {
+          setGuestbookEntries(JSON.parse(storedEntries));
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        // Prefill with default educational posts
+        const defaults = [
+          {
+            id: "1",
+            name: "Santi_Inversor",
+            profile: "agresivo" as RiskProfile,
+            comment: "¡Excelente simulador educativo! Me sirvió para entender el impacto real de la inflación en mis pesos y cómo los CEDEARs ayudan a dolarizar la cartera.",
+            timestamp: "Hace 2 horas"
+          },
+          {
+            id: "2",
+            name: "Marta_Ahorros",
+            profile: "conservador" as RiskProfile,
+            comment: "Muy buena herramienta para la gente que recién arranca. El Plazo Fijo UVA vs el Tradicional es un debate eterno acá, y este gráfico lo explica impecable.",
+            timestamp: "Ayer"
+          },
+          {
+            id: "3",
+            name: "Lucas_G",
+            profile: "moderado" as RiskProfile,
+            comment: "Las Obligaciones Negociables son mi instrumento favorito y acá están re bien explicadas con sus tasas actualizadas. ¡Gracias por el simulador!",
+            timestamp: "Hace 2 días"
+          }
+        ];
+        setGuestbookEntries(defaults);
+        localStorage.setItem("invertplay_guestbook", JSON.stringify(defaults));
+      }
+    }, []);
 
   const handleAddGuestbookEntry = (e: React.FormEvent) => {
     e.preventDefault();
@@ -760,21 +894,21 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
   const getAnnualYield = (instName: string): number => {
     // Return approximate annualized percentage return in ARS
     switch (instName) {
-      case "Plazo Fijo Tradicional": return 0.37;
-      case "Plazo Fijo UVA": return 0.55; // index-linked estimate
-      case "FCI Money Market (Mercado Pago / Ualá)": return 0.335;
-      case "Obligaciones Negociables (ONs)": return 0.58; // ON in USD yields ~8% + typical currency devaluation of ~46% = ~58% in ARS
-      case "SPY": return 0.65; // Global actions are linked to CCL + standard asset growth
-      case "AAPL": return 0.63;
-      case "TSLA": return 0.72;
-      case "MELI": return 0.68;
-      case "MSFT": return 0.61;
-      case "NVDA": return 0.82;
-      case "GGAL": return 0.70;
-      case "YPFD": return 0.75;
-      case "BTC": return 0.85;
-      case "ETH": return 0.80;
-      default: return 0.35;
+      case "Plazo Fijo Tradicional": return 0.20;
+      case "Plazo Fijo UVA": return (currentInflation * 12 / 100) + 0.01; // index-linked estimate (UVA + 1%)
+      case "FCI Money Market (Mercado Pago / Ualá)": return 0.191;
+      case "Obligaciones Negociables (ONs)": return 0.38; // ON in USD yields ~8% + currency devaluation in ARS
+      case "SPY": return 0.42; // Global actions are linked to CCL + standard asset growth
+      case "AAPL": return 0.39;
+      case "TSLA": return 0.45;
+      case "MELI": return 0.42;
+      case "MSFT": return 0.38;
+      case "NVDA": return 0.48;
+      case "GGAL": return 0.45;
+      case "YPFD": return 0.48;
+      case "BTC": return 0.55;
+      case "ETH": return 0.50;
+      default: return 0.20;
     }
   };
 
@@ -795,6 +929,16 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
       projectedReturn
     };
   });
+
+  // Data for Recharts PieChart (Asset allocation percentage chart)
+  const pieChartData = currentAllocationArray
+    .filter(a => a.percentage > 0)
+    .map((a, idx) => ({
+      name: a.instrumentName,
+      value: a.percentage,
+      amount: a.amount,
+      color: ASSET_COLORS[a.instrumentName] || FALLBACK_PIE_COLORS[idx % FALLBACK_PIE_COLORS.length]
+    }));
 
   // Calculate dynamic risk metrics of the current allocation versus user's profile
   const getPortfolioRiskMetrics = () => {
@@ -987,36 +1131,46 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
   // Inflation calculations for the Localized Cost of Inflation tab
   const getInflationMetrics = () => {
-    const monthlyRate = currentInflation / 100; // Dynamic monthly inflation
+    const isUSD = calcCurrency === "USD";
+    // For ARS: current inflation (dynamic); for USD: US CPI global inflation (~0.28% monthly, ~3.4% annual)
+    const monthlyRate = isUSD ? 0.0028 : (currentInflation / 100);
     const accumulatedInflation = Math.pow(1 + monthlyRate, calcMonths) - 1;
-    const currentValue = calcPesos;
-    const remainingPower = calcPesos / Math.pow(1 + monthlyRate, calcMonths);
+    const currentValue = isUSD ? calcDollars : calcPesos;
+    const remainingPower = currentValue / Math.pow(1 + monthlyRate, calcMonths);
     const moneyLost = currentValue - remainingPower;
 
-    // Local examples in Argentina based on average prices in mid-2026
+    // Reference items in Argentina adjusted by currency
+    // In ARS:
     // Café con medialunas: ~$3.500 ARS
     // Tanque de nafta súper (50L): ~$65.000 ARS
-    // Asado completo para 4 personas (carne, carbón, pan, vino): ~$45.000 ARS
-    const cafeCost = 3500;
-    const naftaCost = 65000;
-    const asadoCost = 45000;
+    // Asado completo para 4 personas: ~$45.000 ARS
+    // In USD:
+    // Café de especialidad / Starbucks: ~$3.50 USD
+    // Tanque de combustible súper (50L): ~$55 USD
+    // Asado / Cena para 4 personas: ~$40 USD
+    const cafeCost = isUSD ? 3.5 : 3500;
+    const naftaCost = isUSD ? 55 : 65000;
+    const asadoCost = isUSD ? 40 : 45000;
 
-    const initialCafes = Math.floor(calcPesos / cafeCost);
+    const initialCafes = Math.floor(currentValue / cafeCost);
     const finalCafes = Math.floor(remainingPower / cafeCost);
 
-    const initialNafta = Math.floor(calcPesos / naftaCost);
+    const initialNafta = Math.floor(currentValue / naftaCost);
     const finalNafta = Math.floor(remainingPower / naftaCost);
 
-    const initialAsados = Math.floor(calcPesos / asadoCost);
+    const initialAsados = Math.floor(currentValue / asadoCost);
     const finalAsados = Math.floor(remainingPower / asadoCost);
 
     return {
+      isUSD,
+      currencySymbol: isUSD ? "USD" : "ARS",
+      monthlyRatePercent: (monthlyRate * 100).toFixed(2),
       accumulatedPercent: (accumulatedInflation * 100).toFixed(1),
-      remainingPower: Math.round(remainingPower),
-      moneyLost: Math.round(moneyLost),
-      cafes: { initial: initialCafes, final: finalCafes, diff: initialCafes - finalCafes },
-      nafta: { initial: initialNafta, final: finalNafta, diff: initialNafta - finalNafta },
-      asados: { initial: initialAsados, final: finalAsados, diff: initialAsados - finalAsados }
+      remainingPower: isUSD ? Number(remainingPower.toFixed(2)) : Math.round(remainingPower),
+      moneyLost: isUSD ? Number(moneyLost.toFixed(2)) : Math.round(moneyLost),
+      cafes: { initial: initialCafes, final: finalCafes, diff: Math.max(0, initialCafes - finalCafes) },
+      nafta: { initial: initialNafta, final: finalNafta, diff: Math.max(0, initialNafta - finalNafta) },
+      asados: { initial: initialAsados, final: finalAsados, diff: Math.max(0, initialAsados - finalAsados) }
     };
   };
 
@@ -1109,6 +1263,8 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
       case "TrendingUp": return <TrendingUp className="w-5 h-5 text-blue-400" />;
       case "Globe": return <Globe className="w-5 h-5 text-indigo-400" />;
       case "Coins": return <Coins className="w-5 h-5 text-amber-400" />;
+      case "Wallet": return <Wallet className="w-5 h-5 text-emerald-400" />;
+      case "CreditCard": return <CreditCard className="w-5 h-5 text-purple-400" />;
       default: return <DollarSign className="w-5 h-5 text-zinc-400" />;
     }
   };
@@ -1160,9 +1316,15 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             ) : rates ? (
               <>
                 <div className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0">
+                  <span className="text-zinc-400">Dólar Blue:</span>
+                  <span className="text-white font-semibold font-mono">
+                    ${rates.currencies.find(c => c.name.includes("Blue"))?.sell || 1540}
+                  </span>
+                </div>
+                <div className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0">
                   <span className="text-zinc-400">Dólar MEP:</span>
                   <span className="text-white font-semibold font-mono">
-                    ${rates.currencies.find(c => c.name.includes("MEP"))?.sell || 1295}
+                    ${rates.currencies.find(c => c.name.includes("MEP"))?.sell || 1525}
                   </span>
                 </div>
                 <div className={`px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0 transition-all duration-300 border ${
@@ -1190,9 +1352,9 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   </span>
                 </div>
                 <button 
-                  onClick={fetchRates} 
-                  className="p-1 text-zinc-400 hover:text-white transition hover:bg-zinc-800 rounded-md"
-                  title="Actualizar cotizaciones"
+                  onClick={() => fetchRates(true)} 
+                  className={`p-1 text-zinc-400 hover:text-white transition hover:bg-zinc-800 rounded-md ${loadingRates ? "animate-spin text-emerald-400" : ""}`}
+                  title="Actualizar cotizaciones en vivo"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
@@ -1223,21 +1385,42 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             <div className="flex flex-col gap-2">
               <label className="text-xs font-medium text-zinc-400 flex justify-between">
                 <span>Capital Disponible para Invertir</span>
-                <span className="text-emerald-400 font-semibold">Tasa Libre de Riesgo: 37%</span>
+                <span className="text-emerald-400 font-semibold">Tasa Ref.: {rates?.fixedIncome.find(f => f.name.includes("Plazo Fijo"))?.rate || "20.0% TNA"}</span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-500 font-semibold text-sm">
                   {userProfile.currency === "ARS" ? "$" : "USD"}
                 </div>
                 <input 
-                  type="number" 
-                  value={userProfile.capital} 
+                  type="text" 
+                  inputMode="numeric"
+                  value={localCapital} 
                   onChange={(e) => {
-                    const val = parseFloat(e.target.value) || 0;
-                    setUserProfile(prev => ({ ...prev, capital: val }));
+                    const rawVal = e.target.value;
+                    const sanitized = rawVal.replace(",", ".");
+                    
+                    if (sanitized === "" || /^[0-9]*\.?[0-9]*$/.test(sanitized)) {
+                      setLocalCapital(sanitized);
+                      const parsed = parseFloat(sanitized);
+                      if (!isNaN(parsed)) {
+                        setUserProfile(prev => ({ ...prev, capital: parsed }));
+                      } else {
+                        setUserProfile(prev => ({ ...prev, capital: 0 }));
+                      }
+                    }
+                  }}
+                  onBlur={() => {
+                    if (localCapital === "" || isNaN(parseFloat(localCapital))) {
+                      setLocalCapital("0");
+                      setUserProfile(prev => ({ ...prev, capital: 0 }));
+                    } else {
+                      const parsed = parseFloat(localCapital);
+                      setLocalCapital(parsed.toString());
+                      setUserProfile(prev => ({ ...prev, capital: parsed }));
+                    }
                   }}
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl py-2.5 pl-12 pr-16 text-white font-mono font-medium focus:outline-none focus:border-emerald-500 text-lg transition"
-                  placeholder="0.00"
+                  placeholder="0"
                 />
                 <div className="absolute inset-y-1.5 right-1.5 flex gap-1">
                   <button 
@@ -1253,6 +1436,125 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                     USD
                   </button>
                 </div>
+              </div>
+
+              {/* Quick Preset Badges */}
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {userProfile.currency === "ARS" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 50000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $50k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 100000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $100k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 500000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $500k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 1000000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $1M
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserProfile(prev => ({ ...prev, capital: 0 }));
+                        setLocalCapital("0");
+                      }}
+                      className="px-2 py-1 text-[10px] bg-red-950/40 hover:bg-red-900/30 text-red-400 font-semibold rounded-md transition border border-red-900/30 ml-auto"
+                    >
+                      Limpiar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 100;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $100
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 500;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $500
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 1000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $1k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextVal = userProfile.capital + 5000;
+                        setUserProfile(prev => ({ ...prev, capital: nextVal }));
+                        setLocalCapital(nextVal.toString());
+                      }}
+                      className="px-2 py-1 text-[10px] bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-semibold rounded-md transition"
+                    >
+                      + $5k
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserProfile(prev => ({ ...prev, capital: 0 }));
+                        setLocalCapital("0");
+                      }}
+                      className="px-2 py-1 text-[10px] bg-red-950/40 hover:bg-red-900/30 text-red-400 font-semibold rounded-md transition border border-red-900/30 ml-auto"
+                    >
+                      Limpiar
+                    </button>
+                  </>
+                )}
               </div>
               <p className="text-[11px] text-zinc-500">
                 Sugerencia: Se calcula en base a este capital la asignación y retorno proyectado.
@@ -1420,7 +1722,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                 className="w-full py-2 bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-white font-bold rounded-xl text-[10px] border border-zinc-700/30 transition active:scale-[0.98] flex items-center justify-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                Restaurar Tasa Oficial ({rates?.macroeconomics.monthlyInflation ?? 4.1}%)
+                Restaurar Tasa Oficial ({rates?.macroeconomics.monthlyInflation ?? 2.2}%)
               </button>
             )}
           </div>
@@ -1433,7 +1735,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             <div className="flex flex-col gap-1">
               <h3 className="text-xs font-semibold text-indigo-300">¿Por qué es clave invertir en Argentina?</h3>
               <p className="text-[11px] leading-relaxed text-zinc-400">
-                Con una inflación de aproximadamente 4.1% al mes, guardar dinero en efectivo ("bajo el colchón") significa perder casi la mitad de tu poder adquisitivo en un año. Utilizar instrumentos de tasa fija, UVA o CEDEARs te permite resguardar tu esfuerzo.
+                Con una inflación de aproximadamente {rates?.macroeconomics.monthlyInflation ?? 2.2}% al mes, guardar dinero en efectivo ("bajo el colchón") significa perder poder adquisitivo de forma acelerada frente al costo de vida. Utilizar instrumentos como cuentas remuneradas, UVA o CEDEARs te permite resguardar tu esfuerzo.
               </p>
             </div>
           </div>
@@ -1619,11 +1921,28 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
                       {/* Currencies Grid */}
                       <div>
-                        <h3 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
-                          <DollarSign className="w-4 h-4 text-emerald-400" />
-                          Tipos de Cambio (Dólar en Argentina)
-                        </h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                          <h3 className="text-sm font-semibold text-zinc-400 flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-emerald-400" />
+                            Tipos de Cambio (Dólar en Argentina)
+                          </h3>
+                          <div className="flex items-center gap-2 text-[11px] text-zinc-500">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              {rates.lastUpdated ? `Actualizado: ${rates.lastUpdated}` : "En Vivo"}
+                            </span>
+                            <button
+                              onClick={() => fetchRates(true)}
+                              disabled={loadingRates}
+                              className="text-zinc-400 hover:text-white transition flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-800"
+                              title="Forzar actualización desde el mercado"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${loadingRates ? "animate-spin text-emerald-400" : ""}`} />
+                              <span>Refrescar</span>
+                            </button>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                           {rates.currencies.map((curr) => (
                             <div key={curr.name} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-col gap-2 hover:border-zinc-700 transition">
                               <div className="flex justify-between items-center">
@@ -2031,7 +2350,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                     {/* Allocation Breakdown and Sliders */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       
-                      {/* Instrument allocations list */}
+                      {/* Instrument allocations list & Recharts Pie Chart */}
                       <div className="flex flex-col gap-3">
                         <div className="flex justify-between items-center">
                           <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Activos en tu Cartera</h4>
@@ -2043,56 +2362,159 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                                 setIsCustomizingAllocation(true);
                               }
                             }}
-                            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
+                            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold transition hover:underline"
                           >
                             {isCustomizingAllocation ? "Volver a sugerido" : "Personalizar porcentajes"}
                           </button>
                         </div>
 
-                        <div className="flex flex-col gap-3.5 bg-zinc-950 p-4 rounded-xl border border-zinc-800/80">
-                          {currentAllocationArray.map((alloc) => (
-                            <div key={alloc.instrumentName} className="flex flex-col gap-1.5">
-                              <div className="flex justify-between text-xs font-medium">
-                                <span className="text-white font-semibold">{alloc.instrumentName}</span>
-                                <span className="text-zinc-400 font-mono font-bold">
-                                  {alloc.percentage}% ({userProfile.currency === "USD" ? "USD" : "ARS"} {Math.round(alloc.amount).toLocaleString("es-AR")})
-                                </span>
-                              </div>
-                              
-                              {/* Range Input if customizing */}
-                              {isCustomizingAllocation ? (
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="100"
-                                  step="5"
-                                  value={alloc.percentage}
-                                  onChange={(e) => {
-                                    const val = parseInt(e.target.value) || 0;
-                                    setCustomAllocations(prev => {
-                                      const updated = { ...prev, [alloc.instrumentName]: val };
-                                      return updated;
-                                    });
-                                  }}
-                                  className="w-full accent-emerald-500 h-1.5 bg-zinc-850 rounded-lg cursor-pointer"
-                                />
-                              ) : (
-                                <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
-                                  <div 
-                                    className="h-full bg-emerald-500 rounded-full" 
-                                    style={{ width: `${alloc.percentage}%` }}
-                                  />
+                        {/* Side-by-side container for Sliders List & Recharts Pie Chart */}
+                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5">
+                          {/* Sliders / Allocation List */}
+                          <div className="flex flex-col gap-3.5 bg-zinc-950 p-4 rounded-xl border border-zinc-800/80">
+                            {currentAllocationArray.map((alloc, idx) => {
+                              const assetColor = ASSET_COLORS[alloc.instrumentName] || FALLBACK_PIE_COLORS[idx % FALLBACK_PIE_COLORS.length];
+                              return (
+                                <div key={alloc.instrumentName} className="flex flex-col gap-1.5">
+                                  <div className="flex justify-between text-xs font-medium">
+                                    <span className="text-white font-semibold flex items-center gap-1.5">
+                                      <span 
+                                        className="w-2.5 h-2.5 rounded-full inline-block shrink-0 shadow-sm" 
+                                        style={{ backgroundColor: assetColor }} 
+                                      />
+                                      {alloc.instrumentName}
+                                    </span>
+                                    <span className="text-zinc-400 font-mono font-bold">
+                                      {alloc.percentage}% ({userProfile.currency === "USD" ? "USD" : "ARS"} {Math.round(alloc.amount).toLocaleString("es-AR")})
+                                    </span>
+                                  </div>
+                                  
+                                  {/* Range Input if customizing */}
+                                  {isCustomizingAllocation ? (
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max="100"
+                                      step="5"
+                                      value={alloc.percentage}
+                                      onChange={(e) => {
+                                        const val = parseInt(e.target.value) || 0;
+                                        setCustomAllocations(prev => {
+                                          const updated = { ...prev, [alloc.instrumentName]: val };
+                                          return updated;
+                                        });
+                                      }}
+                                      className="w-full accent-emerald-500 h-1.5 bg-zinc-850 rounded-lg cursor-pointer"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+                                      <div 
+                                        className="h-full rounded-full transition-all duration-300" 
+                                        style={{ width: `${alloc.percentage}%`, backgroundColor: assetColor }}
+                                      />
+                                    </div>
+                                  )}
+                                  
+                                  <div className="flex justify-between text-[10px] text-zinc-500">
+                                    <span>Retorno estimado: {(getAnnualYield(alloc.instrumentName)*100).toFixed(1)}% TNA</span>
+                                    <span className="text-emerald-400 font-mono">
+                                      Ganancia: +{userProfile.currency === "USD" ? "USD" : "ARS"} {Math.round(alloc.projectedReturn).toLocaleString("es-AR")}
+                                    </span>
+                                  </div>
                                 </div>
-                              )}
-                              
-                              <div className="flex justify-between text-[10px] text-zinc-500">
-                                <span>Retorno estimado: {(getAnnualYield(alloc.instrumentName)*100).toFixed(1)}% TNA</span>
-                                <span className="text-emerald-400 font-mono">
-                                  Ganancia: +{userProfile.currency === "USD" ? "USD" : "ARS"} {Math.round(alloc.projectedReturn).toLocaleString("es-AR")}
-                                </span>
-                              </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Recharts Pie Chart Card */}
+                          <div className="flex flex-col justify-between bg-zinc-950 p-4 rounded-xl border border-zinc-800/80 min-h-[260px]">
+                            <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                              <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                                <PieChartIcon className="w-3.5 h-3.5 text-emerald-400" />
+                                Gráfico de Torta (% Cartera)
+                              </span>
+                              <span className="text-[10px] text-zinc-500 font-mono">
+                                {pieChartData.length} activo{pieChartData.length !== 1 ? "s" : ""}
+                              </span>
                             </div>
-                          ))}
+
+                            {pieChartData.length > 0 ? (
+                              <div className="w-full h-[220px] relative flex items-center justify-center my-auto">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={pieChartData}
+                                      cx="50%"
+                                      cy="42%"
+                                      innerRadius={42}
+                                      outerRadius={70}
+                                      paddingAngle={3}
+                                      dataKey="value"
+                                      nameKey="name"
+                                      animationDuration={500}
+                                    >
+                                      {pieChartData.map((entry, index) => (
+                                        <Cell 
+                                          key={`pie-cell-${index}`} 
+                                          fill={entry.color} 
+                                          stroke="#09090b"
+                                          strokeWidth={2}
+                                        />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip 
+                                      content={({ active, payload }) => {
+                                        if (active && payload && payload.length) {
+                                          const data = payload[0].payload;
+                                          return (
+                                            <div className="bg-zinc-900 border border-zinc-700/80 p-2.5 rounded-lg shadow-2xl text-xs font-sans">
+                                              <p className="font-extrabold text-white mb-1 flex items-center gap-1.5">
+                                                <span 
+                                                  className="w-2.5 h-2.5 rounded-full inline-block" 
+                                                  style={{ backgroundColor: data.color }} 
+                                                />
+                                                {data.name}
+                                              </p>
+                                              <p className="text-emerald-400 font-mono font-bold">
+                                                {data.value}% <span className="text-zinc-400 font-normal">({userProfile.currency === "USD" ? "USD" : "ARS"} {Math.round(data.amount).toLocaleString("es-AR")})</span>
+                                              </p>
+                                            </div>
+                                          );
+                                        }
+                                        return null;
+                                      }}
+                                    />
+                                    <Legend 
+                                      formatter={(value, entry: any) => (
+                                        <span className="text-[10px] text-zinc-300 font-medium">
+                                          {value} ({entry.payload?.value}%)
+                                        </span>
+                                      )}
+                                      iconSize={7}
+                                      iconType="circle"
+                                      layout="horizontal"
+                                      verticalAlign="bottom"
+                                      align="center"
+                                      wrapperStyle={{ paddingTop: "6px" }}
+                                    />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                                
+                                {/* Center Donut Label */}
+                                <div className="absolute top-[38%] left-1/2 -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+                                  <span className="text-[9px] uppercase font-bold text-zinc-500 block leading-none">Total</span>
+                                  <span className="text-xs font-extrabold font-mono text-white leading-tight">
+                                    {totalAllocatedPercentage}%
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-zinc-500 text-xs py-10 text-center flex flex-col items-center justify-center gap-1 my-auto">
+                                <PieChartIcon className="w-8 h-8 text-zinc-700 mb-1" />
+                                <span>Sin distribución configurada</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {/* Allocations sum indicator */}
@@ -2304,8 +2726,78 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`}
                           />
                           <Tooltip 
-                            contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '12px', fontSize: '12px', color: '#f4f4f5' }}
-                            formatter={(value: any) => [`$${value.toLocaleString("es-AR")}`, '']}
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                const portfolioItem = payload.find((p: any) => p.dataKey === "Retorno Proyectado");
+                                const cashItem = payload.find((p: any) => p.dataKey === "Pérdida por Inflación (Efectivo)");
+                                const marketItem = payload.find((p: any) => p.dataKey === "Promedio de Mercado");
+
+                                const portfolioVal = Math.round(Number(portfolioItem?.value || 0));
+                                const cashVal = Math.round(Number(cashItem?.value || 0));
+                                const marketVal = marketItem ? Math.round(Number(marketItem.value || 0)) : null;
+
+                                const diffAbsolute = portfolioVal - cashVal;
+                                const diffPercent = cashVal > 0 ? ((diffAbsolute / cashVal) * 100).toFixed(1) : "0";
+                                const currSymbol = userProfile.currency === "USD" ? "USD" : "ARS";
+
+                                return (
+                                  <div className="bg-zinc-950/95 backdrop-blur-md border border-zinc-700/80 rounded-xl p-3.5 shadow-2xl text-xs flex flex-col gap-2 min-w-[270px]">
+                                    <div className="flex justify-between items-center border-b border-zinc-800 pb-1.5">
+                                      <span className="font-extrabold text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                                        <LineChart className="w-3.5 h-3.5 text-blue-400" />
+                                        Mes {label} de Proyección
+                                      </span>
+                                      <span className="text-[10px] text-zinc-400 font-mono">T+{label}m</span>
+                                    </div>
+
+                                    <div className="flex flex-col gap-1.5 text-[11px]">
+                                      <div className="flex justify-between items-center text-emerald-400">
+                                        <span className="flex items-center gap-1.5 font-medium">
+                                          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                                          Portafolio Diversificado:
+                                        </span>
+                                        <span className="font-mono font-bold">${portfolioVal.toLocaleString("es-AR")} {currSymbol}</span>
+                                      </div>
+
+                                      {marketVal !== null && (
+                                        <div className="flex justify-between items-center text-blue-400">
+                                          <span className="flex items-center gap-1.5 font-medium">
+                                            <span className="w-2 h-2 rounded-full bg-blue-500" />
+                                            Promedio de Mercado:
+                                          </span>
+                                          <span className="font-mono font-bold">${marketVal.toLocaleString("es-AR")} {currSymbol}</span>
+                                        </div>
+                                      )}
+
+                                      <div className="flex justify-between items-center text-red-400">
+                                        <span className="flex items-center gap-1.5 font-medium">
+                                          <span className="w-2 h-2 rounded-full bg-red-400" />
+                                          Efectivo ("Colchón"):
+                                        </span>
+                                        <span className="font-mono font-bold">${cashVal.toLocaleString("es-AR")} {currSymbol}</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Detailed Absolute Difference Tooltip (User Request) */}
+                                    <div className="mt-1 pt-2 border-t border-zinc-800 bg-zinc-900/80 p-2.5 rounded-lg flex flex-col gap-1 border border-zinc-800/60">
+                                      <div className="flex justify-between items-center">
+                                        <span className="text-[10px] text-zinc-300 font-bold uppercase tracking-wider">
+                                          Diferencia Absoluta:
+                                        </span>
+                                        <span className={`font-mono font-extrabold text-xs ${diffAbsolute >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                          {diffAbsolute >= 0 ? "+" : ""}${diffAbsolute.toLocaleString("es-AR")} {currSymbol}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between items-center text-[10px] text-zinc-400">
+                                        <span>Ventaja sobre efectivo:</span>
+                                        <span className="font-mono text-emerald-400 font-bold">+{diffPercent}%</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            }}
                           />
                           <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                           <Area 
@@ -2412,11 +2904,11 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             onChange={(e) => setRealGainFundType(e.target.value)}
                             className="w-full bg-zinc-950 border border-zinc-850 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
                           >
-                            <option value="money_market">FCI Money Market (Mercado Pago, Ualá) (~33.5% TNA)</option>
-                            <option value="naranja_x">Cuenta Remunerada Naranja X (~40% TNA)</option>
-                            <option value="plazo_fijo">Plazo Fijo Tradicional (~37% TNA)</option>
-                            <option value="renta_fija">FCI Renta Fija (Bonos Cortos) (~45% TNA)</option>
-                            <option value="acciones_arg">FCI Acciones Argentinas (~70% TNA)</option>
+                            <option value="money_market">FCI Money Market (Mercado Pago, Ualá) (~19.1% TNA)</option>
+                            <option value="naranja_x">Cuenta Remunerada Naranja X (~25% TNA)</option>
+                            <option value="plazo_fijo">Plazo Fijo Tradicional (~20% TNA)</option>
+                            <option value="renta_fija">FCI Renta Fija (Bonos Cortos) (~28% TNA)</option>
+                            <option value="acciones_arg">FCI Acciones Argentinas (~40% TNA)</option>
                             <option value="custom">Fondo Personalizado (Tasa Propia)</option>
                           </select>
                         </div>
@@ -2468,27 +2960,27 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                       {/* Right: Rich results cards (7 cols on lg) */}
                       <div className="lg:col-span-7 flex flex-col gap-4">
                         {(() => {
-                          let fundTna = 0.35;
+                          let fundTna = 0.20;
                           let fundLabel = "Fondo de Inversión";
                           switch (realGainFundType) {
                             case "money_market":
-                              fundTna = 0.335;
+                              fundTna = 0.191;
                               fundLabel = "FCI Money Market (Mercado Pago / Ualá)";
                               break;
                             case "naranja_x":
-                              fundTna = 0.40;
+                              fundTna = 0.25;
                               fundLabel = "Cuenta Remunerada Naranja X";
                               break;
                             case "renta_fija":
-                              fundTna = 0.45;
+                              fundTna = 0.28;
                               fundLabel = "FCI Renta Fija Pesos";
                               break;
                             case "plazo_fijo":
-                              fundTna = 0.37;
+                              fundTna = 0.20;
                               fundLabel = "Plazo Fijo Tradicional";
                               break;
                             case "acciones_arg":
-                              fundTna = 0.70;
+                              fundTna = 0.40;
                               fundLabel = "FCI Acciones Argentinas";
                               break;
                             case "custom":
@@ -2647,14 +3139,42 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   className="flex flex-col gap-6"
                 >
                   <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-6">
-                    <div>
-                      <h3 className="text-base font-semibold text-white flex items-center gap-2">
-                        <Calculator className="w-5 h-5 text-amber-400" />
-                        Calculadora del Costo de No Invertir ("Bajo el Colchón")
-                      </h3>
-                      <p className="text-xs text-zinc-400">
-                        Introduce un capital guardado en pesos y visualiza con ejemplos cotidianos cuánta riqueza real destruye la inflación mensual.
-                      </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800/80 pb-4">
+                      <div>
+                        <h3 className="text-base font-semibold text-white flex items-center gap-2">
+                          <Calculator className="w-5 h-5 text-amber-400" />
+                          Calculadora del Costo de No Invertir ("Bajo el Colchón")
+                        </h3>
+                        <p className="text-xs text-zinc-400 mt-0.5">
+                          Compara cuánta riqueza real destruye la inflación guardando dinero inactivo en pesos o dólares.
+                        </p>
+                      </div>
+
+                      {/* Currency Toggle: ARS vs USD */}
+                      <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 self-start sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => setCalcCurrency("ARS")}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                            calcCurrency === "ARS"
+                              ? "bg-amber-500 text-zinc-950 shadow-sm"
+                              : "text-zinc-400 hover:text-white"
+                          }`}
+                        >
+                          <span>🇦🇷 Pesos (ARS)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCalcCurrency("USD")}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                            calcCurrency === "USD"
+                              ? "bg-amber-500 text-zinc-950 shadow-sm"
+                              : "text-zinc-400 hover:text-white"
+                          }`}
+                        >
+                          <span>🇺🇸 Dólares (USD)</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2663,23 +3183,48 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                       <div className="flex flex-col gap-5">
                         <div className="flex flex-col gap-2">
                           <label className="text-xs font-semibold text-zinc-400 flex justify-between">
-                            <span>Suma en Pesos Inactiva</span>
-                            <span className="text-amber-400 font-mono">${calcPesos.toLocaleString("es-AR")} ARS</span>
+                            <span>{calcCurrency === "ARS" ? "Suma en Pesos Inactiva" : "Suma en Dólares Inactiva"}</span>
+                            <span className="text-amber-400 font-mono">
+                              {calcCurrency === "ARS" 
+                                ? `$${calcPesos.toLocaleString("es-AR")} ARS` 
+                                : `US$ ${calcDollars.toLocaleString("en-US")} USD`}
+                            </span>
                           </label>
-                          <input 
-                            type="range"
-                            min="50000"
-                            max="5000000"
-                            step="50000"
-                            value={calcPesos}
-                            onChange={(e) => setCalcPesos(parseInt(e.target.value) || 50000)}
-                            className="w-full accent-amber-500 h-2 bg-zinc-950 rounded-lg cursor-pointer"
-                          />
-                          <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-0.5">
-                            <span>$50.000</span>
-                            <span>$2.500.000</span>
-                            <span>$5.000.000</span>
-                          </div>
+                          {calcCurrency === "ARS" ? (
+                            <>
+                              <input 
+                                type="range"
+                                min="50000"
+                                max="5000000"
+                                step="50000"
+                                value={calcPesos}
+                                onChange={(e) => setCalcPesos(parseInt(e.target.value) || 50000)}
+                                className="w-full accent-amber-500 h-2 bg-zinc-950 rounded-lg cursor-pointer"
+                              />
+                              <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-0.5">
+                                <span>$50.000</span>
+                                <span>$2.500.000</span>
+                                <span>$5.000.000</span>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <input 
+                                type="range"
+                                min="100"
+                                max="20000"
+                                step="100"
+                                value={calcDollars}
+                                onChange={(e) => setCalcDollars(parseInt(e.target.value) || 100)}
+                                className="w-full accent-amber-500 h-2 bg-zinc-950 rounded-lg cursor-pointer"
+                              />
+                              <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-0.5">
+                                <span>US$ 100</span>
+                                <span>US$ 10.000</span>
+                                <span>US$ 20.000</span>
+                              </div>
+                            </>
+                          )}
                         </div>
 
                         <div className="flex flex-col gap-2">
@@ -2704,42 +3249,70 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                         </div>
 
                         <div className="bg-zinc-950 p-4 border border-zinc-850 rounded-xl flex flex-col gap-2 text-center">
-                          <span className="text-xs text-zinc-500 uppercase font-medium">Devaluación Acumulada Proyectada</span>
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="text-xs text-zinc-500 uppercase font-medium">Pérdida de Poder Adquisitivo</span>
+                            <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded-full font-mono font-bold">
+                              {calcMetrics.monthlyRatePercent}% mensual
+                            </span>
+                          </div>
                           <span className="text-4xl font-extrabold text-amber-500 font-mono">
-                            {calcMetrics.accumulatedPercent}%
+                            -{calcMetrics.accumulatedPercent}%
                           </span>
                           <p className="text-[10px] text-zinc-400 leading-relaxed px-2">
-                            La inflación acumulada en {calcMonths} meses requerirá un {calcMetrics.accumulatedPercent}% más de dinero para adquirir los mismos bienes.
+                            {calcCurrency === "ARS" ? (
+                              <>La inflación acumulada en {calcMonths} meses requerirá un {calcMetrics.accumulatedPercent}% más de pesos para comprar exactamente los mismos productos.</>
+                            ) : (
+                              <>Incluso en dólares, la inflación acumulada ({calcMetrics.monthlyRatePercent}% mensual / CPI internacional) devalúa tu poder de compra en un {calcMetrics.accumulatedPercent}% en {calcMonths} meses si no los inviertes.</>
+                            )}
                           </p>
                         </div>
                       </div>
 
                       {/* Right: localized results with metrics */}
                       <div className="bg-zinc-950 border border-zinc-850 p-5 rounded-xl flex flex-col gap-4">
-                        <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Pérdida en la Economía Real</h4>
+                        <div className="flex justify-between items-center">
+                          <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
+                            Pérdida en Bienes de la Economía Real
+                          </h4>
+                          <span className="text-[10px] font-mono text-zinc-500 font-bold">
+                            Base: {calcMetrics.currencySymbol}
+                          </span>
+                        </div>
                         
                         <div className="flex flex-col gap-1 border-b border-zinc-800 pb-3">
                           <span className="text-[11px] text-zinc-500 font-medium">Poder de compra remanente:</span>
                           <span className="text-2xl font-black font-mono text-zinc-200">
-                            ${calcMetrics.remainingPower.toLocaleString("es-AR")} ARS
+                            {calcCurrency === "ARS" 
+                              ? `$${calcMetrics.remainingPower.toLocaleString("es-AR")} ARS` 
+                              : `US$ ${calcMetrics.remainingPower.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
                           </span>
                           <span className="text-xs font-bold text-red-400 flex items-center gap-1.5 mt-0.5">
                             <TrendingDown className="w-4 h-4" />
-                            Perdiste el equivalente a ${calcMetrics.moneyLost.toLocaleString("es-AR")} ARS
+                            Perdiste el equivalente a {calcCurrency === "ARS" 
+                              ? `$${calcMetrics.moneyLost.toLocaleString("es-AR")} ARS` 
+                              : `US$ ${calcMetrics.moneyLost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`}
                           </span>
                         </div>
 
                         {/* Localized comparison examples */}
                         <div className="flex flex-col gap-3">
-                          <p className="text-xs text-zinc-400">¿Qué significa esta desvalorización de dinero real?</p>
+                          <p className="text-xs text-zinc-400">
+                            {calcCurrency === "ARS"
+                              ? "¿Qué significa esta desvalorización en productos locales?"
+                              : "¿Qué significa esta desvalorización en dólares físicos?"}
+                          </p>
                           
                           {/* Cafes */}
                           <div className="bg-zinc-900 p-3 rounded-lg border border-zinc-850 flex items-center justify-between gap-3">
                             <div className="flex items-center gap-2.5">
                               <div className="text-amber-500 text-lg shrink-0">☕</div>
                               <div className="flex flex-col">
-                                <span className="text-xs text-white font-semibold">Cafés con Medialunas</span>
-                                <span className="text-[10px] text-zinc-500">Estimado en $3.500 c/u</span>
+                                <span className="text-xs text-white font-semibold">
+                                  {calcCurrency === "ARS" ? "Cafés con Medialunas" : "Cafés de Especialidad"}
+                                </span>
+                                <span className="text-[10px] text-zinc-500">
+                                  {calcCurrency === "ARS" ? "Estimado en $3.500 ARS c/u" : "Estimado en US$ 3.50 c/u"}
+                                </span>
                               </div>
                             </div>
                             <div className="flex flex-col items-end">
@@ -2755,7 +3328,9 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                               <div className="text-amber-500 text-lg shrink-0">🚗</div>
                               <div className="flex flex-col">
                                 <span className="text-xs text-white font-semibold">Tanques de Combustible Súper</span>
-                                <span className="text-[10px] text-zinc-500">Tanque 50L ($65.000 c/u)</span>
+                                <span className="text-[10px] text-zinc-500">
+                                  {calcCurrency === "ARS" ? "Tanque 50L ($65.000 ARS c/u)" : "Tanque 50L (US$ 55 c/u)"}
+                                </span>
                               </div>
                             </div>
                             <div className="flex flex-col items-end">
@@ -2770,14 +3345,18 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             <div className="flex items-center gap-2.5">
                               <div className="text-amber-500 text-lg shrink-0">🥩</div>
                               <div className="flex flex-col">
-                                <span className="text-xs text-white font-semibold">Asado para 4 Personas</span>
-                                <span className="text-[10px] text-zinc-500">Carne y acompañamientos ($45.000 c/u)</span>
+                                <span className="text-xs text-white font-semibold">
+                                  {calcCurrency === "ARS" ? "Asado para 4 Personas" : "Cena / Asado para 4 Personas"}
+                                </span>
+                                <span className="text-[10px] text-zinc-500">
+                                  {calcCurrency === "ARS" ? "Carne y bebidas ($45.000 ARS c/u)" : "Cena completa (US$ 40 c/u)"}
+                                </span>
                               </div>
                             </div>
                             <div className="flex flex-col items-end">
                               <span className="text-[10px] text-zinc-400 line-through font-mono">Antes: {calcMetrics.asados.initial}</span>
                               <span className="text-xs font-bold text-red-400 font-mono">Ahora: {calcMetrics.asados.final}</span>
-                              <span className="text-[9px] text-red-500 font-medium font-mono">-{calcMetrics.asados.diff} asados</span>
+                              <span className="text-[9px] text-red-500 font-medium font-mono">-{calcMetrics.asados.diff} comidas</span>
                             </div>
                           </div>
 
@@ -3100,34 +3679,145 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
           </div>
 
-          {/* Visitor Counter & Support Server Card */}
-          <div className="w-full md:w-[320px] bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-5 justify-between">
-            <div className="flex flex-col gap-3">
-              <div className="pb-2 border-b border-zinc-800 flex items-center gap-2.5">
-                <TrendingUp className="w-5 h-5 text-amber-500" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Estadísticas</h3>
+          {/* Visitor Counter & Support Server Card (Real Visitor Tracking excluding creator) */}
+          <div className="w-full md:w-[350px] bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
+            <div className="pb-2 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Visitas Reales</h3>
+              </div>
+              <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold font-mono flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                EN VIVO
+              </span>
+            </div>
+
+            {/* Creator Exclusion Mode Banner */}
+            <div className={`p-3 rounded-xl border transition-all duration-200 flex flex-col gap-2 ${
+              isOwnerMode 
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-300" 
+                : "bg-zinc-950 border-zinc-800 text-zinc-400"
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <Crown className={`w-4 h-4 ${isOwnerMode ? "text-amber-400" : "text-zinc-500"}`} />
+                  <span>Modo Creador</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleToggleOwnerMode(!isOwnerMode)}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition active:scale-95 flex items-center gap-1 ${
+                    isOwnerMode
+                      ? "bg-amber-500 text-zinc-950 border-amber-400 shadow-sm"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700"
+                  }`}
+                >
+                  {isOwnerMode ? (
+                    <>
+                      <EyeOff className="w-3 h-3" />
+                      <span>Mis visitas: EXCLUIDAS</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3 h-3" />
+                      <span>Mis visitas: Incluidas</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <p className="text-[10px] leading-relaxed text-zinc-400">
+                {isOwnerMode ? (
+                  <span className="text-amber-200/90 font-medium">
+                    ✓ <strong>Tus visitas NO se contabilizan.</strong> Podés navegar, recargar y testear con total tranquilidad sin alterar las estadísticas.
+                  </span>
+                ) : (
+                  <span>Tus ingresos a la app se están contando como una visita normal. Haz clic arriba para excluirte.</span>
+                )}
+              </p>
+            </div>
+
+            {/* Real Counter Box */}
+            <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-4 flex flex-col items-center justify-center gap-2 text-center relative overflow-hidden">
+              <span className="text-[10px] text-zinc-500 uppercase font-semibold tracking-wider">
+                Visitas Reales Totales
+              </span>
+              
+              <div className="flex items-baseline gap-1.5 animate-blink-fast text-red-500 font-mono drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]">
+                <span className="text-3xl font-black tracking-widest">{visitorCount.toLocaleString()}</span>
+                <span className="text-xs font-bold uppercase">Visitas</span>
               </div>
 
-              {/* Visitor Counter */}
-              <div className="bg-zinc-950 border border-zinc-850 rounded-xl p-4 flex flex-col items-center justify-center gap-1.5 text-center relative overflow-hidden">
-                <span className="text-[10px] text-zinc-500 uppercase font-semibold tracking-wider">
-                  Contador de Visitas
-                </span>
-                
-                {/* Blinking counter as requested: "Contador de visitas - titilante" */}
-                <div className="flex items-baseline gap-1 animate-blink-fast text-red-500 font-mono drop-shadow-[0_0_8px_rgba(239,68,68,0.3)]">
-                  <span className="text-3xl font-black tracking-widest">{visitorCount.toLocaleString()}</span>
-                  <span className="text-xs font-bold uppercase">Online</span>
+              {/* Multi-metric Real Grid */}
+              <div className="grid grid-cols-3 gap-2 w-full mt-1 pt-2 border-t border-zinc-900 text-[10px]">
+                <div className="flex flex-col items-center bg-zinc-900/60 p-2 rounded-lg border border-zinc-850/60">
+                  <span className="text-zinc-500 text-[8px] uppercase font-bold">Únicos</span>
+                  <span className="text-emerald-400 font-mono font-bold text-xs">{uniqueUsers.toLocaleString()}</span>
                 </div>
+                <div className="flex flex-col items-center bg-zinc-900/60 p-2 rounded-lg border border-zinc-850/60">
+                  <span className="text-zinc-500 text-[8px] uppercase font-bold">Hoy</span>
+                  <span className="text-blue-400 font-mono font-bold text-xs">{todayVisits.toLocaleString()}</span>
+                </div>
+                <div className="flex flex-col items-center bg-zinc-900/60 p-2 rounded-lg border border-zinc-850/60">
+                  <span className="text-zinc-500 text-[8px] uppercase font-bold">En Línea</span>
+                  <span className="text-amber-400 font-mono font-bold text-xs flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+                    {activeNow}
+                  </span>
+                </div>
+              </div>
 
-                <div className="flex items-center gap-1 text-[9px] text-emerald-400 mt-1 font-semibold">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
-                  <span>Servidor en línea y activo</span>
-                </div>
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between w-full pt-2 border-t border-zinc-900 gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualVisitPulse}
+                  className="text-[9px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-1 rounded-lg font-bold transition active:scale-95 flex-1"
+                  title="Simular una visita externa para verificar que el contador funciona"
+                >
+                  + Simular Visita Externa
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetRealVisitorCount}
+                  className="text-[9px] bg-zinc-800 hover:bg-red-500/20 text-zinc-400 hover:text-red-300 border border-zinc-700/50 hover:border-red-500/30 p-1.5 rounded-lg font-bold transition active:scale-95"
+                  title="Reiniciar contador de visitas reales a 0"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
               </div>
             </div>
 
-            {/* Support server with steaming coffee image: "Apoyo servidor a través de imagen de pocillo de café humeante https://mpago.la/2m7bcUT" */}
+            {/* Recent Real Visits Log */}
+            <div className="bg-zinc-950/60 border border-zinc-850 rounded-xl p-3 flex flex-col gap-2">
+              <div className="flex justify-between items-center text-[10px]">
+                <span className="font-bold text-zinc-400 uppercase tracking-wider">Últimas Visitas Reales</span>
+                <span className="text-zinc-500 font-mono">{recentVisits.length} reg.</span>
+              </div>
+              {recentVisits.length === 0 ? (
+                <div className="text-center py-2 text-[10px] text-zinc-600 font-mono">
+                  [Aún no hay visitas externas registradas]
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1 max-h-[110px] overflow-y-auto pr-1 scrollbar-none">
+                  {recentVisits.map((v, idx) => (
+                    <div key={idx} className="bg-zinc-900/80 border border-zinc-850 px-2 py-1 rounded flex justify-between items-center text-[9px] font-mono">
+                      <div className="flex items-center gap-1.5 text-zinc-300">
+                        {v.deviceType === "Móvil" ? (
+                          <Smartphone className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <Laptop className="w-3 h-3 text-blue-400" />
+                        )}
+                        <span>{v.deviceType}</span>
+                        {v.tab && <span className="text-zinc-500">({v.tab})</span>}
+                      </div>
+                      <span className="text-zinc-500">{v.timestamp}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Support server with steaming coffee image */}
             <div className="bg-gradient-to-br from-amber-950/15 to-zinc-950/40 border border-amber-500/20 rounded-xl p-4 flex flex-col gap-3">
               <div className="flex items-center gap-2.5">
                 <div className="bg-amber-500/10 p-1.5 rounded-lg border border-amber-500/25 shrink-0 flex items-center justify-center">
@@ -3152,124 +3842,6 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
               >
                 <span>¡Apoyar con un Cafecito! ☕</span>
               </a>
-            </div>
-
-          </div>
-
-          {/* Mixpanel Configuration Card */}
-          <div className="w-full md:w-[320px] bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl flex flex-col gap-4">
-            <div className="pb-2 border-b border-zinc-800 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-purple-400 animate-pulse" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Analíticas</h3>
-              </div>
-              <span className="text-[9px] bg-purple-500/10 text-purple-400 border border-purple-500/25 px-2 py-0.5 rounded-full font-semibold uppercase">
-                Opcional
-              </span>
-            </div>
-
-            <div className="bg-emerald-500/10 border border-emerald-500/25 p-3 rounded-xl flex flex-col gap-1 text-[11px] text-emerald-400 leading-normal">
-              <span className="font-extrabold flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                ¡MODO LOCAL ACTIVO!
-              </span>
-              <span>
-                No te preocupes. El simulador ya funciona al 100% en modo local. No necesitás registrarte ni configurar nada para continuar usándolo.
-              </span>
-            </div>
-
-            <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Opcionalmente, si querés medir tu propia audiencia, podés ingresar un Token de Mixpanel. Si no lo necesitás, ignorá esta tarjeta completamente.
-            </p>
-
-            <form onSubmit={handleSaveMixpanelToken} className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
-                  Token de Proyecto (Opcional)
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={mixpanelToken}
-                    onChange={(e) => setMixpanelToken(e.target.value)}
-                    placeholder="Ej: f4a8c..."
-                    className="w-full bg-zinc-950 border border-zinc-800 focus:border-purple-500/60 rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none transition font-mono placeholder:text-zinc-600"
-                  />
-                  {mixpanelToken && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMixpanelToken("");
-                        localStorage.removeItem("mixpanel_project_token");
-                        window.dispatchEvent(new Event("mixpanel-token-changed"));
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-xs px-1 font-bold"
-                      title="Limpiar Token"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1.5 active:scale-[0.98]"
-              >
-                <span>Habilitar Analíticas (Opcional) 📊</span>
-              </button>
-            </form>
-
-            {mixpanelSaved && (
-              <div className="text-[10px] text-purple-300 font-semibold bg-purple-500/10 border border-purple-500/20 px-3 py-2 rounded-xl text-center flex items-center justify-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping" />
-                <span>¡Configuración opcional guardada!</span>
-              </div>
-            )}
-
-            <div className="text-[9px] text-zinc-500 leading-normal bg-zinc-950/40 p-2.5 rounded-xl border border-zinc-850 flex flex-col gap-1">
-              <div>
-                <span className="text-zinc-400 font-bold">Estado actual:</span>{" "}
-                {mixpanelToken ? (
-                  <span className="text-emerald-400 font-bold">● Conectado (Producción)</span>
-                ) : (
-                  <span className="text-amber-400 font-bold">● Modo Simulado / Consola</span>
-                )}
-              </div>
-            </div>
-
-            {/* Live Events Stream */}
-            <div className="border-t border-zinc-800/80 pt-3 flex flex-col gap-2">
-              <span className="text-[10px] font-black text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
-                Mixpanel Live Event Stream
-              </span>
-              <p className="text-[9px] text-zinc-500 leading-normal">
-                Mira en tiempo real los eventos de métricas gratuitas registrados mientras interactúas:
-              </p>
-              
-              {mixpanelEvents.length === 0 ? (
-                <div className="text-center py-4 bg-zinc-950/40 rounded-xl border border-zinc-850/60 text-zinc-600 text-[10px] font-mono">
-                  [Esperando interacciones...]
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5 max-h-[140px] overflow-y-auto pr-1 scrollbar-none">
-                  {mixpanelEvents.map(evt => (
-                    <div key={evt.id} className="bg-zinc-950/60 border border-zinc-850/50 p-2 rounded-lg flex flex-col gap-0.5 text-[10px] font-mono hover:border-purple-500/20 transition">
-                      <div className="flex justify-between text-[9px]">
-                        <span className="text-purple-400 font-bold font-sans">⚡ {evt.eventName}</span>
-                        <span className="text-zinc-600">{evt.timestamp}</span>
-                      </div>
-                      <div className="text-[8px] text-zinc-500 leading-relaxed truncate" title={JSON.stringify(evt.properties)}>
-                        {Object.entries(evt.properties || {})
-                          .filter(([k]) => !["url", "referrer", "timestamp"].includes(k))
-                          .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
-                          .join(", ") || "[Sin propiedades extra]"}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
           </div>

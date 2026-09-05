@@ -52,6 +52,8 @@ export interface FinancialRates {
   localStocks: LocalStockInstrument[];
   crypto: CryptoInstrument[];
   macroeconomics: MacroeconomicData;
+  lastUpdated?: string;
+  source?: string;
 }
 
 export type RiskProfile = "conservador" | "moderado" | "agresivo";
