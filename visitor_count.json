@@ -1,5 +1,8 @@
 {
   "totalVisits": 0,
   "uniqueUsers": 0,
-  "knownClients": []
+  "todayVisits": 0,
+  "todayDate": "2026-09-24",
+  "knownClients": [],
+  "recentVisits": []
 }

@@ -793,6 +793,29 @@ app.get("/api/news", async (req, res) => {
   }
 });
 
+// Google Search Console Site Verification route
+app.get("/googlee814d7c05b3fbac6.html", (_req, res) => {
+  res.type("text/html").send("google-site-verification: googlee814d7c05b3fbac6.html");
+});
+
+// Robots.txt route
+app.get("/robots.txt", (_req, res) => {
+  res.type("text/plain").send(`User-agent: *\nAllow: /\n\nSitemap: https://ais-pre-4bxn72yqf7itemkjzgq3lo-172786148761.us-east1.run.app/sitemap.xml\n`);
+});
+
+// Sitemap.xml route
+app.get("/sitemap.xml", (_req, res) => {
+  res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://ais-pre-4bxn72yqf7itemkjzgq3lo-172786148761.us-east1.run.app/</loc>
+    <lastmod>${new Date().toISOString().split("T")[0]}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`);
+});
+
 // Serve frontend assets
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {

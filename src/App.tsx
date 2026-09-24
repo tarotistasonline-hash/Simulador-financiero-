@@ -41,7 +41,8 @@ import {
   Users,
   RotateCcw,
   Smartphone,
-  Laptop
+  Laptop,
+  Bot
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -1358,6 +1359,22 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
+                <button
+                  onClick={() => {
+                    setActiveTab("advisor");
+                    trackEvent("Header Advisor Button Clicked");
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition shrink-0 cursor-pointer shadow-sm ${
+                    activeTab === "advisor"
+                      ? "bg-amber-500 text-zinc-950 shadow-amber-500/30"
+                      : "bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30"
+                  }`}
+                  title="Abrir Asesor Invert-Play con Inteligencia Artificial"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-spin-slow" />
+                  <span>Asesor Invert-Play</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+                </button>
               </>
             ) : (
               <span className="text-red-400">Error de conexión</span>
@@ -1604,6 +1621,71 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </div>
           </div>
 
+          {/* Prominent "Asesor Invert-Play" Sidebar Spotlight Card */}
+          <div className="bg-gradient-to-b from-amber-500/10 via-zinc-900 to-zinc-900 border border-amber-500/30 rounded-2xl p-4 shadow-xl flex flex-col gap-3 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-28 h-28 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+            
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                    Asesor Invert-Play
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.2 rounded-full font-bold">
+                      EN VIVO
+                    </span>
+                  </h3>
+                  <p className="text-[10px] text-zinc-400">Inteligencia Artificial Financiera</p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-zinc-300 leading-relaxed">
+              Obtené un diagnóstico instantáneo para tus <strong className="text-amber-400 font-mono">${userProfile.capital.toLocaleString("es-AR")} {userProfile.currency}</strong> según cotizaciones del día e inflación proyectada.
+            </p>
+
+            {/* Quick Prompt Trigger Chips */}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider">Consultas sugeridas:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("advisor");
+                  handleSendMessage(`¿Cuál es la mejor estrategia para invertir ${userProfile.currency === "USD" ? "US$ " : "$"}${userProfile.capital.toLocaleString("es-AR")} ${userProfile.currency} hoy con mi perfil ${userProfile.riskProfile}?`);
+                }}
+                className="text-left text-[11px] p-2 rounded-lg bg-zinc-950/80 hover:bg-amber-500/10 border border-zinc-800 hover:border-amber-500/30 text-zinc-300 hover:text-white transition flex items-center justify-between group cursor-pointer"
+              >
+                <span>¿En qué invertir mi capital hoy?</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-amber-400 transition" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("advisor");
+                  handleSendMessage(`¿Conviene más hacer Plazo Fijo, comprar Dólar MEP o invertir en CEDEARs en el contexto económico actual?`);
+                }}
+                className="text-left text-[11px] p-2 rounded-lg bg-zinc-950/80 hover:bg-amber-500/10 border border-zinc-800 hover:border-amber-500/30 text-zinc-300 hover:text-white transition flex items-center justify-between group cursor-pointer"
+              >
+                <span>¿Dólar MEP vs Plazo Fijo vs Cedears?</span>
+                <ArrowUpRight className="w-3.5 h-3.5 text-zinc-500 group-hover:text-amber-400 transition" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("advisor");
+                trackEvent("Sidebar Open Advisor Clicked");
+              }}
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black text-xs rounded-xl shadow-lg shadow-amber-500/20 transition active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Bot className="w-4 h-4" />
+              Abrir Panel del Asesor
+            </button>
+          </div>
+
           {/* Dynamic Portfolio Deviation Warning Card */}
           <AnimatePresence>
             {riskMetrics.isDeviated && (
@@ -1785,16 +1867,52 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
             </button>
             <button
               onClick={() => setActiveTab("advisor")}
-              className={`flex-1 min-w-[115px] sm:min-w-[120px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition ${
+              className={`flex-1 min-w-[130px] sm:min-w-[140px] shrink-0 sm:shrink py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
                 activeTab === "advisor"
-                  ? "bg-amber-500 text-zinc-950 font-black border border-amber-300 shadow-lg shadow-amber-500/20"
-                  : "bg-amber-950/20 text-amber-400 border border-amber-900/30 hover:bg-amber-900/20 font-extrabold"
+                  ? "bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-black border border-amber-300 shadow-lg shadow-amber-500/25"
+                  : "bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-extrabold"
               }`}
             >
-              <Sparkles className={`w-4 h-4 ${activeTab === "advisor" ? "text-zinc-950" : "text-amber-400"} animate-spin`} />
-              <span className="animate-blink-gold-text uppercase tracking-widest text-[11px] font-black">Asesor IA</span>
+              <Sparkles className={`w-4 h-4 ${activeTab === "advisor" ? "text-zinc-950" : "text-amber-400"}`} />
+              <span className="uppercase tracking-wider text-[11px] font-black">Asesor Invert-Play</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             </button>
           </nav>
+
+          {/* Quick-Access Prominent Advisor Banner (visible when browsing Rates, Simulator, or Calculator) */}
+          {activeTab !== "advisor" && (
+            <div className="bg-gradient-to-r from-amber-500/15 via-zinc-900 to-zinc-900 border border-amber-500/30 rounded-2xl p-4 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-400 shrink-0 mt-0.5 sm:mt-0">
+                  <Sparkles className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                      Panel del Asesor Invert-Play
+                    </h4>
+                    <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.2 rounded-full font-bold">
+                      IA Financiera Activa
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 mt-0.5">
+                    ¿No sabés qué activos elegir? El Asesor analiza tus <strong className="text-amber-400 font-mono">${userProfile.capital.toLocaleString("es-AR")} {userProfile.currency}</strong> y tu perfil <span className="uppercase text-emerald-400 font-bold">{userProfile.riskProfile}</span> en tiempo real.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("advisor");
+                  trackEvent("Tab Top Banner Advisor Clicked");
+                }}
+                className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black text-xs py-2 px-4 rounded-xl transition shadow-md shadow-amber-500/20 shrink-0 flex items-center justify-center gap-1.5 self-start sm:self-center active:scale-[0.98] cursor-pointer"
+              >
+                <span>Consultar al Asesor</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           {/* Tab Views Stage */}
           <div className="flex-1">
@@ -3987,6 +4105,23 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Floating Quick Action Button for Asesor Invert-Play */}
+      {activeTab !== "advisor" && (
+        <button
+          onClick={() => {
+            setActiveTab("advisor");
+            trackEvent("Floating Advisor Button Clicked");
+            window.scrollTo({ top: 380, behavior: "smooth" });
+          }}
+          className="fixed bottom-6 right-6 z-40 bg-gradient-to-r from-amber-500 via-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 font-black py-2.5 px-4 rounded-full shadow-2xl shadow-amber-500/30 border border-amber-300 flex items-center gap-2 transition duration-200 hover:scale-105 active:scale-95 cursor-pointer select-none group"
+          aria-label="Abrir Asesor Invert-Play"
+        >
+          <Sparkles className="w-4 h-4 text-zinc-950 group-hover:rotate-12 transition-transform" />
+          <span className="text-xs tracking-wide">Asesor Invert-Play</span>
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+        </button>
+      )}
 
     </div>
   );
