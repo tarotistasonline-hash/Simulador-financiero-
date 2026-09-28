@@ -1408,7 +1408,10 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                     </span>
                   )}
                 </div>
-                <div className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0">
+                <div 
+                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0 cursor-help"
+                  title="Índice EMBI+ Argentina de JP Morgan (Actualizado en tiempo real vía ArgentinaDatos)"
+                >
                   <span className="text-white font-medium">Riesgo País:</span>
                   <span className="text-red-500 font-bold font-mono">
                     {rates.macroeconomics.riskCountry} pts

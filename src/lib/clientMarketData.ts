@@ -35,9 +35,9 @@ export const BASE_FINANCIAL_RATES: FinancialRates = {
     { symbol: "USDT", name: "Tether (Dólar Cripto)", priceUSD: 1.0, priceARS: 1574, change: 0.1 }
   ],
   macroeconomics: {
-    monthlyInflation: 2.2,
+    monthlyInflation: 1.7,
     projectedAnnualInflation: 29.8,
-    riskCountry: 495
+    riskCountry: 609
   },
   lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
   source: "Mercado Local Argentina & DolarApi"
@@ -170,15 +170,56 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
     { symbol: "NVDA", name: "Nvidia Corp.", priceARS: Math.round((120 * cclSell) / 12), change: 3.2, ratio: "12:1", assetClass: "Inteligencia Artificial" }
   ];
 
+  // Fetch live Riesgo País and Macro indicators
+  let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry;
+  let liveMonthlyInflation = BASE_FINANCIAL_RATES.macroeconomics.monthlyInflation;
+
+  try {
+    const riskRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais/ultimo", {
+      headers: { "Accept": "application/json" }
+    });
+    if (riskRes.ok) {
+      const riskData = await riskRes.json();
+      const val = typeof riskData?.valor === "number" ? Math.round(riskData.valor) : parseInt(riskData?.valor);
+      if (!isNaN(val) && val > 0) {
+        liveRiskCountry = val;
+      }
+    }
+  } catch (err) {
+    console.warn("[ClientMarketData] Error conectando a riesgo país en vivo:", err);
+  }
+
+  try {
+    const infRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", {
+      headers: { "Accept": "application/json" }
+    });
+    if (infRes.ok) {
+      const infData = await infRes.json();
+      if (Array.isArray(infData) && infData.length > 0) {
+        const lastInf = infData[infData.length - 1];
+        const infVal = typeof lastInf?.valor === "number" ? lastInf.valor : parseFloat(lastInf?.valor);
+        if (!isNaN(infVal) && infVal > 0) {
+          liveMonthlyInflation = infVal;
+        }
+      }
+    }
+  } catch {
+    // Keep fallback
+  }
+
   const result: FinancialRates = {
     currencies: liveCurrencies,
     fixedIncome: BASE_FINANCIAL_RATES.fixedIncome,
     cedears: liveCedears,
     localStocks: BASE_FINANCIAL_RATES.localStocks,
     crypto: liveCrypto,
-    macroeconomics: BASE_FINANCIAL_RATES.macroeconomics,
+    macroeconomics: {
+      monthlyInflation: liveMonthlyInflation,
+      projectedAnnualInflation: BASE_FINANCIAL_RATES.macroeconomics.projectedAnnualInflation,
+      riskCountry: liveRiskCountry
+    },
     lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
-    source: sourceTag
+    source: `${sourceTag} + ArgentinaDatos`
   };
 
   cachedDirectRates = result;
