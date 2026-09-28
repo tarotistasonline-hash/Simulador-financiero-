@@ -72,6 +72,12 @@ import {
 } from "./types";
 import { AdSenseBanner } from "./components/AdSenseBanner";
 import { trackEvent } from "./lib/analytics";
+import { 
+  fetchDirectMarketRates, 
+  BASE_FINANCIAL_RATES, 
+  FALLBACK_NEWS, 
+  generateClientFallbackAdvice 
+} from "./lib/clientMarketData";
 
 export interface NewsItem {
   title: string;
@@ -450,18 +456,36 @@ export default function App() {
     }
   }, [userProfile.capital]);
 
-  // Fetch rates on component mount
+  // Fetch rates on component mount with robust fallback for static hosts (Netlify, etc.)
   const fetchRates = async (force = false) => {
     try {
       setLoadingRates(true);
-      const res = await fetch(`/api/rates${force ? "?force=true" : ""}`);
-      if (!res.ok) throw new Error("No se pudieron cargar las cotizaciones del servidor.");
-      const data = await res.json();
+      let data: FinancialRates | null = null;
+
+      // 1. Try to fetch from backend if running fullstack (Express)
+      try {
+        const res = await fetch(`/api/rates${force ? "?force=true" : ""}`, {
+          signal: AbortSignal.timeout(3500)
+        });
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
+          data = await res.json();
+        }
+      } catch {
+        // Expected when deployed to static hosts like Netlify/Vercel without Node.js backend
+      }
+
+      // 2. If no backend (e.g. Netlify static hosting) or backend returned non-JSON, fetch directly from public market APIs (DolarApi, Coinbase)
+      if (!data || !data.currencies || data.currencies.length === 0) {
+        data = await fetchDirectMarketRates(force);
+      }
+
       setRates(data);
       setErrorRates(null);
     } catch (err: any) {
-      console.error(err);
-      setErrorRates("No se pudo conectar con el servidor para obtener cotizaciones en tiempo real.");
+      console.warn("[Rates] Usando base de cotizaciones local de contingencia:", err);
+      setRates(BASE_FINANCIAL_RATES);
+      setErrorRates(null);
     } finally {
       setLoadingRates(false);
     }
@@ -657,25 +681,40 @@ export default function App() {
         }
       }
 
-      const res = await fetch("/api/news");
-      if (!res.ok) throw new Error("No se pudieron cargar las noticias de último momento.");
-      const data = await res.json();
-      setNews(data);
+      let data: any[] | null = null;
+      try {
+        const res = await fetch("/api/news", { signal: AbortSignal.timeout(3500) });
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
+          data = await res.json();
+        }
+      } catch {
+        // Expected when deployed to Netlify without backend
+      }
+
+      if (!data || !Array.isArray(data) || data.length === 0) {
+        const staleCached = localStorage.getItem("invertplay_news_cache");
+        if (staleCached) {
+          try {
+            data = JSON.parse(staleCached);
+          } catch {
+            data = FALLBACK_NEWS;
+          }
+        } else {
+          data = FALLBACK_NEWS;
+        }
+      }
+
+      setNews(data || FALLBACK_NEWS);
       setErrorNews(null);
 
       // Save to client-side localStorage
-      localStorage.setItem("invertplay_news_cache", JSON.stringify(data));
+      localStorage.setItem("invertplay_news_cache", JSON.stringify(data || FALLBACK_NEWS));
       localStorage.setItem("invertplay_news_timestamp", Date.now().toString());
     } catch (err: any) {
-      console.error(err);
-      // Try to recover from local storage if network request failed due to server rate limit
-      const staleCached = localStorage.getItem("invertplay_news_cache");
-      if (staleCached) {
-        setNews(JSON.parse(staleCached));
-        setErrorNews(null);
-      } else {
-        setErrorNews("No se pudo conectar con el servidor para obtener las últimas noticias financieras.");
-      }
+      console.warn("[News] Usando noticias de contingencia:", err);
+      setNews(FALLBACK_NEWS);
+      setErrorNews(null);
     } finally {
       setLoadingNews(false);
     }
@@ -719,7 +758,8 @@ export default function App() {
             tab: activeTab
           })
         });
-        if (res.ok) {
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
           const data = await res.json();
           setVisitorCount(data.totalVisits ?? 0);
           setUniqueUsers(data.uniqueUsers ?? 0);
@@ -728,9 +768,17 @@ export default function App() {
           if (Array.isArray(data.recentVisits)) setRecentVisits(data.recentVisits);
           localStorage.setItem("invertplay_visitors", (data.totalVisits ?? 0).toString());
           localStorage.setItem("invertplay_unique_users", (data.uniqueUsers ?? 0).toString());
+        } else {
+          // Local fallback for static hosts without backend (Netlify, etc.)
+          const localVisits = Math.max(1, parseInt(localStorage.getItem("invertplay_local_visits") || "1", 10) + (isOwnerMode ? 0 : 1));
+          localStorage.setItem("invertplay_local_visits", localVisits.toString());
+          setVisitorCount(localVisits);
+          setUniqueUsers(1);
+          setActiveNow(1);
+          setTodayVisits(localVisits);
         }
       } catch (err) {
-        console.error("Error registering visit:", err);
+        // Silent fallback for offline / static hosting
       }
     };
 
@@ -740,7 +788,8 @@ export default function App() {
     const pollInterval = setInterval(async () => {
       try {
         const res = await fetch(`/api/visitors?clientId=${encodeURIComponent(clientId)}&isOwner=${isOwnerMode ? "true" : "false"}`);
-        if (res.ok) {
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
           const data = await res.json();
           if (typeof data.totalVisits === "number") setVisitorCount(data.totalVisits);
           if (typeof data.uniqueUsers === "number") setUniqueUsers(data.uniqueUsers);
@@ -1209,34 +1258,47 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
       }));
       chatHistory.push({ role: "user", content: promptText });
 
-      const res = await fetch("/api/advisor/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          messages: chatHistory,
-          userProfile: {
-            capital: userProfile.capital,
-            currency: userProfile.currency,
-            riskProfile: userProfile.riskProfile,
-            goals: userProfile.goals
-          }
-        })
-      });
+      let replyContent = "";
+      let isFallback = false;
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || "Error al conectar con el asesor virtual.");
+      try {
+        const res = await fetch("/api/advisor/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            messages: chatHistory,
+            userProfile: {
+              capital: userProfile.capital,
+              currency: userProfile.currency,
+              riskProfile: userProfile.riskProfile,
+              goals: userProfile.goals
+            }
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        const contentType = res.headers.get("content-type") || "";
+        if (res.ok && contentType.includes("application/json")) {
+          const data = await res.json();
+          replyContent = data.content;
+          isFallback = !!data.isFallback;
+        } else {
+          throw new Error("Backend offline");
+        }
+      } catch {
+        // Fallback for static hosts (like Netlify) without Node.js backend
+        replyContent = generateClientFallbackAdvice(chatHistory as any, userProfile);
+        isFallback = true;
       }
 
-      const data = await res.json();
-      setIsFallbackMode(!!data.isFallback);
+      setIsFallbackMode(isFallback);
 
       setChatMessages(prev => [...prev, {
         id: Math.random().toString(),
         role: "assistant",
-        content: data.content,
+        content: replyContent,
         timestamp: new Date()
       }]);
 
