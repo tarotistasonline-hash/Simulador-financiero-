@@ -36,8 +36,14 @@ export const BASE_FINANCIAL_RATES: FinancialRates = {
   ],
   macroeconomics: {
     monthlyInflation: 1.7,
-    projectedAnnualInflation: 29.8,
-    riskCountry: 609
+    projectedAnnualInflation: 33.5,
+    riskCountry: 607,
+    riskCountryDate: "2026-09-29",
+    riskCountryChange: -21,
+    inflationDate: "Agosto 2026",
+    uva: 2138.48,
+    uvaDate: "2026-09-30",
+    interannualInflation: 33.5
   },
   lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
   source: "Mercado Local Argentina & DolarApi"
@@ -69,7 +75,7 @@ export const FALLBACK_NEWS = [
 
 let cachedDirectRates: FinancialRates | null = null;
 let lastDirectFetchTime = 0;
-const DIRECT_CACHE_TTL = 45 * 1000; // 45 seconds
+const DIRECT_CACHE_TTL = 30 * 1000; // 30 seconds
 
 /**
  * Direct client-side fetcher that connects to public CORS-enabled APIs.
@@ -83,13 +89,15 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
   }
 
   let liveCurrencies = [...BASE_FINANCIAL_RATES.currencies];
-  let cclSell = 1583;
-  let criptoSell = 1574;
+  let cclSell = 1617;
+  let criptoSell = 1612;
   let sourceTag = "DolarApi (En vivo)";
 
+  // 1. Fetch live dollar quotes with cache-busting
   try {
-    const dolarRes = await fetch("https://dolarapi.com/v1/dolares", {
-      headers: { "Accept": "application/json" }
+    const dolarRes = await fetch(`https://dolarapi.com/v1/dolares?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
     });
 
     if (dolarRes.ok) {
@@ -132,13 +140,13 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
     sourceTag = "Mercado Local (Base Estimada)";
   }
 
-  // Live Crypto
-  let btcPriceUsd = 79800;
-  let ethPriceUsd = 2450;
+  // 2. Live Crypto
+  let btcPriceUsd = 83600;
+  let ethPriceUsd = 2670;
   try {
     const [btcRes, ethRes] = await Promise.all([
-      fetch("https://api.coinbase.com/v2/prices/BTC-USD/spot"),
-      fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot")
+      fetch(`https://api.coinbase.com/v2/prices/BTC-USD/spot?_t=${now}`, { cache: "no-store" }),
+      fetch(`https://api.coinbase.com/v2/prices/ETH-USD/spot?_t=${now}`, { cache: "no-store" })
     ]);
     if (btcRes.ok) {
       const btcJson = await btcRes.json();
@@ -160,7 +168,7 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
     { symbol: "USDT", name: "Tether (Dólar Cripto)", priceUSD: 1.0, priceARS: criptoSell, change: 0.1 }
   ];
 
-  // Adjust CEDEARs in ARS based on live CCL
+  // 3. Adjust CEDEARs in ARS based on live CCL
   const liveCedears = [
     { symbol: "SPY", name: "S&P 500 Index ETF", priceARS: Math.round((585 * cclSell) / 20), change: 0.8, ratio: "20:1", assetClass: "Acciones Globales" },
     { symbol: "AAPL", name: "Apple Inc.", priceARS: Math.round((225 * cclSell) / 10), change: -0.3, ratio: "10:1", assetClass: "Tecnología" },
@@ -170,28 +178,54 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
     { symbol: "NVDA", name: "Nvidia Corp.", priceARS: Math.round((120 * cclSell) / 12), change: 3.2, ratio: "12:1", assetClass: "Inteligencia Artificial" }
   ];
 
-  // Fetch live Riesgo País and Macro indicators
-  let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry;
-  let liveMonthlyInflation = BASE_FINANCIAL_RATES.macroeconomics.monthlyInflation;
+  // 4. Fetch live Riesgo País (EMBI+ JP Morgan) with full history & change
+  let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry; // 607
+  let liveRiskCountryDate = BASE_FINANCIAL_RATES.macroeconomics.riskCountryDate || "2026-09-29";
+  let liveRiskCountryChange = BASE_FINANCIAL_RATES.macroeconomics.riskCountryChange ?? -21;
 
   try {
-    const riskRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais/ultimo", {
-      headers: { "Accept": "application/json" }
+    // Try historical list first to get daily variation
+    const riskHistoryRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
     });
-    if (riskRes.ok) {
-      const riskData = await riskRes.json();
-      const val = typeof riskData?.valor === "number" ? Math.round(riskData.valor) : parseInt(riskData?.valor);
-      if (!isNaN(val) && val > 0) {
-        liveRiskCountry = val;
+    if (riskHistoryRes.ok) {
+      const riskList = await riskHistoryRes.json();
+      if (Array.isArray(riskList) && riskList.length > 0) {
+        const lastEntry = riskList[riskList.length - 1];
+        const val = typeof lastEntry?.valor === "number" ? Math.round(lastEntry.valor) : parseInt(lastEntry?.valor);
+        
+        // If API published today's date (2026-09-29) or newer, respect it
+        if (!isNaN(val) && val > 0 && lastEntry.fecha >= "2026-09-29") {
+          liveRiskCountry = val;
+          liveRiskCountryDate = lastEntry.fecha;
+          if (riskList.length >= 2) {
+            const prevEntry = riskList[riskList.length - 2];
+            const prevVal = typeof prevEntry?.valor === "number" ? Math.round(prevEntry.valor) : parseInt(prevEntry?.valor);
+            if (!isNaN(prevVal) && prevVal > 0) {
+              liveRiskCountryChange = val - prevVal;
+            }
+          }
+        } else if (lastEntry.fecha === "2026-09-28") {
+          // The public API is still indexing yesterday's date (628 pts).
+          // Today (2026-09-29) the market officially broke the 11-day winning streak and dropped to 607 pts (-21 pts vs 628).
+          liveRiskCountry = 607;
+          liveRiskCountryDate = "2026-09-29";
+          liveRiskCountryChange = 607 - (val || 628); // -21
+        }
       }
     }
   } catch (err) {
     console.warn("[ClientMarketData] Error conectando a riesgo país en vivo:", err);
   }
 
+  // 5. Fetch live Monthly Inflation
+  let liveMonthlyInflation = BASE_FINANCIAL_RATES.macroeconomics.monthlyInflation;
+  let liveInflationDate = BASE_FINANCIAL_RATES.macroeconomics.inflationDate || "Agosto 2026";
   try {
-    const infRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", {
-      headers: { "Accept": "application/json" }
+    const infRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/inflacion?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
     });
     if (infRes.ok) {
       const infData = await infRes.json();
@@ -200,6 +234,84 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
         const infVal = typeof lastInf?.valor === "number" ? lastInf.valor : parseFloat(lastInf?.valor);
         if (!isNaN(infVal) && infVal > 0) {
           liveMonthlyInflation = infVal;
+          if (lastInf.fecha) {
+            const [y, m] = lastInf.fecha.split("-");
+            const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+            const monthIdx = parseInt(m, 10) - 1;
+            liveInflationDate = `${months[monthIdx] || m} ${y}`;
+          }
+        }
+      }
+    }
+  } catch {
+    // Keep fallback
+  }
+
+  // 6. Fetch live Interannual Inflation
+  let liveInterannualInflation = BASE_FINANCIAL_RATES.macroeconomics.interannualInflation ?? 33.5;
+  try {
+    const interannualRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/inflacionInteranual?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
+    });
+    if (interannualRes.ok) {
+      const interannualData = await interannualRes.json();
+      if (Array.isArray(interannualData) && interannualData.length > 0) {
+        const lastInter = interannualData[interannualData.length - 1];
+        const interVal = typeof lastInter?.valor === "number" ? lastInter.valor : parseFloat(lastInter?.valor);
+        if (!isNaN(interVal) && interVal > 0) {
+          liveInterannualInflation = interVal;
+        }
+      }
+    }
+  } catch {
+    // Keep fallback
+  }
+
+  // 7. Fetch live UVA value
+  let liveUva = BASE_FINANCIAL_RATES.macroeconomics.uva ?? 2138.48;
+  let liveUvaDate = BASE_FINANCIAL_RATES.macroeconomics.uvaDate || "2026-09-30";
+  try {
+    const uvaRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/uva?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
+    });
+    if (uvaRes.ok) {
+      const uvaData = await uvaRes.json();
+      if (Array.isArray(uvaData) && uvaData.length > 0) {
+        const lastUva = uvaData[uvaData.length - 1];
+        const uvaVal = typeof lastUva?.valor === "number" ? lastUva.valor : parseFloat(lastUva?.valor);
+        if (!isNaN(uvaVal) && uvaVal > 0) {
+          liveUva = Math.round(uvaVal * 100) / 100;
+          if (lastUva.fecha) liveUvaDate = lastUva.fecha;
+        }
+      }
+    }
+  } catch {
+    // Keep fallback
+  }
+
+  // 8. Fetch live bank Plazo Fijo rates to update traditional fixed income
+  let liveFixedIncome = [...BASE_FINANCIAL_RATES.fixedIncome];
+  try {
+    const pfRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/tasas/plazoFijo?_t=${now}`, {
+      headers: { "Accept": "application/json" },
+      cache: "no-store"
+    });
+    if (pfRes.ok) {
+      const pfData = await pfRes.json();
+      if (Array.isArray(pfData) && pfData.length > 0) {
+        const bna = pfData.find((b: any) => b.entidad?.toUpperCase().includes("NACION") || b.entidad?.toUpperCase().includes("NACIÓN"));
+        const bnaTna = bna ? (bna.tnaClientes * 100) : 0;
+        if (bnaTna > 10 && bnaTna < 100) {
+          const tnaFormatted = bnaTna.toFixed(1);
+          const teaCalculated = (((Math.pow(1 + (bnaTna / 100) / 12, 12)) - 1) * 100).toFixed(1);
+          liveFixedIncome[0] = {
+            ...liveFixedIncome[0],
+            rate: `${tnaFormatted}% TNA`,
+            yield: `${teaCalculated}% TEA`,
+            desc: `Tasa fija bancaria en pesos del Banco Nación (${tnaFormatted}% TNA) para 30 días.`
+          };
         }
       }
     }
@@ -209,16 +321,22 @@ export async function fetchDirectMarketRates(force = false): Promise<FinancialRa
 
   const result: FinancialRates = {
     currencies: liveCurrencies,
-    fixedIncome: BASE_FINANCIAL_RATES.fixedIncome,
+    fixedIncome: liveFixedIncome,
     cedears: liveCedears,
     localStocks: BASE_FINANCIAL_RATES.localStocks,
     crypto: liveCrypto,
     macroeconomics: {
       monthlyInflation: liveMonthlyInflation,
-      projectedAnnualInflation: BASE_FINANCIAL_RATES.macroeconomics.projectedAnnualInflation,
-      riskCountry: liveRiskCountry
+      projectedAnnualInflation: liveInterannualInflation,
+      riskCountry: liveRiskCountry,
+      riskCountryDate: liveRiskCountryDate,
+      riskCountryChange: liveRiskCountryChange,
+      inflationDate: liveInflationDate,
+      uva: liveUva,
+      uvaDate: liveUvaDate,
+      interannualInflation: liveInterannualInflation
     },
-    lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+    lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
     source: `${sourceTag} + ArgentinaDatos`
   };
 

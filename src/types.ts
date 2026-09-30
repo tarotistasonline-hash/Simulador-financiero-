@@ -43,6 +43,12 @@ export interface MacroeconomicData {
   monthlyInflation: number;
   projectedAnnualInflation: number;
   riskCountry: number;
+  riskCountryDate?: string;
+  riskCountryChange?: number;
+  inflationDate?: string;
+  uva?: number;
+  uvaDate?: string;
+  interannualInflation?: number;
 }
 
 export interface FinancialRates {

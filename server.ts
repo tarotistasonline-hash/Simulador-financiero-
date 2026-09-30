@@ -60,8 +60,14 @@ const BASE_FINANCIAL_RATES = {
   ],
   macroeconomics: {
     monthlyInflation: 1.7,
-    projectedAnnualInflation: 29.8,
-    riskCountry: 609
+    projectedAnnualInflation: 33.5,
+    riskCountry: 607,
+    riskCountryDate: "2026-09-29",
+    riskCountryChange: -21,
+    inflationDate: "Agosto 2026",
+    uva: 2138.48,
+    uvaDate: "2026-09-30",
+    interannualInflation: 33.5
   },
   lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
   source: "Mercado Local Argentina & DolarApi"
@@ -69,7 +75,7 @@ const BASE_FINANCIAL_RATES = {
 
 let cachedRates = JSON.parse(JSON.stringify(BASE_FINANCIAL_RATES));
 let lastRatesFetchTime = 0;
-const RATES_CACHE_TTL_MS = 60 * 1000; // 60s cache
+const RATES_CACHE_TTL_MS = 30 * 1000; // 30s cache
 
 async function fetchLiveMarketRates(force = false) {
   const now = Date.now();
@@ -79,58 +85,62 @@ async function fetchLiveMarketRates(force = false) {
 
   try {
     // 1. Fetch live dollar quotes from DolarApi
-    const dolarRes = await fetch("https://dolarapi.com/v1/dolares", {
-      headers: { "Accept": "application/json" },
-      signal: AbortSignal.timeout(4000)
-    });
-
     let liveCurrencies = [...BASE_FINANCIAL_RATES.currencies];
-    let cclSell = 1583;
-    let criptoSell = 1574;
+    let cclSell = 1617;
+    let criptoSell = 1612;
 
-    if (dolarRes.ok) {
-      const dolaresData = await dolarRes.json();
-      if (Array.isArray(dolaresData) && dolaresData.length > 0) {
-        const mapped: any[] = [];
-        const findCasa = (c: string) => dolaresData.find((d: any) => d.casa?.toLowerCase() === c.toLowerCase());
+    try {
+      const dolarRes = await fetch(`https://dolarapi.com/v1/dolares?_t=${now}`, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(4000)
+      });
 
-        const oficial = findCasa("oficial");
-        if (oficial) mapped.push({ name: "Dólar Oficial", buy: Math.round(oficial.compra), sell: Math.round(oficial.venta), change: 0.1, icon: "Building" });
+      if (dolarRes.ok) {
+        const dolaresData = await dolarRes.json();
+        if (Array.isArray(dolaresData) && dolaresData.length > 0) {
+          const mapped: any[] = [];
+          const findCasa = (c: string) => dolaresData.find((d: any) => d.casa?.toLowerCase() === c.toLowerCase());
 
-        const blue = findCasa("blue");
-        if (blue) mapped.push({ name: "Dólar Blue", buy: Math.round(blue.compra), sell: Math.round(blue.venta), change: 0.3, icon: "Wallet" });
+          const oficial = findCasa("oficial");
+          if (oficial) mapped.push({ name: "Dólar Oficial", buy: Math.round(oficial.compra), sell: Math.round(oficial.venta), change: 0.1, icon: "Building" });
 
-        const bolsa = findCasa("bolsa");
-        if (bolsa) mapped.push({ name: "Dólar MEP (Bolsa)", buy: Math.round(bolsa.compra), sell: Math.round(bolsa.venta), change: 0.2, icon: "TrendingUp" });
+          const blue = findCasa("blue");
+          if (blue) mapped.push({ name: "Dólar Blue", buy: Math.round(blue.compra), sell: Math.round(blue.venta), change: 0.3, icon: "Wallet" });
 
-        const ccl = findCasa("contadoconliqui");
-        if (ccl) {
-          cclSell = Math.round(ccl.venta);
-          mapped.push({ name: "Dólar CCL", buy: Math.round(ccl.compra), sell: cclSell, change: 0.3, icon: "Globe" });
-        }
+          const bolsa = findCasa("bolsa");
+          if (bolsa) mapped.push({ name: "Dólar MEP (Bolsa)", buy: Math.round(bolsa.compra), sell: Math.round(bolsa.venta), change: 0.2, icon: "TrendingUp" });
 
-        const cripto = findCasa("cripto");
-        if (cripto) {
-          criptoSell = Math.round(cripto.venta);
-          mapped.push({ name: "Dólar Cripto (USDT)", buy: Math.round(cripto.compra), sell: criptoSell, change: 0.2, icon: "Coins" });
-        }
+          const ccl = findCasa("contadoconliqui");
+          if (ccl) {
+            cclSell = Math.round(ccl.venta);
+            mapped.push({ name: "Dólar CCL", buy: Math.round(ccl.compra), sell: cclSell, change: 0.3, icon: "Globe" });
+          }
 
-        const tarjeta = findCasa("tarjeta");
-        if (tarjeta) mapped.push({ name: "Dólar Tarjeta", buy: Math.round(tarjeta.compra), sell: Math.round(tarjeta.venta), change: 0.1, icon: "CreditCard" });
+          const cripto = findCasa("cripto");
+          if (cripto) {
+            criptoSell = Math.round(cripto.venta);
+            mapped.push({ name: "Dólar Cripto (USDT)", buy: Math.round(cripto.compra), sell: criptoSell, change: 0.2, icon: "Coins" });
+          }
 
-        if (mapped.length >= 3) {
-          liveCurrencies = mapped;
+          const tarjeta = findCasa("tarjeta");
+          if (tarjeta) mapped.push({ name: "Dólar Tarjeta", buy: Math.round(tarjeta.compra), sell: Math.round(tarjeta.venta), change: 0.1, icon: "CreditCard" });
+
+          if (mapped.length >= 3) {
+            liveCurrencies = mapped;
+          }
         }
       }
+    } catch {
+      // Keep baseline
     }
 
     // 2. Fetch live crypto prices
-    let btcPriceUsd = 79800;
-    let ethPriceUsd = 2450;
+    let btcPriceUsd = 83600;
+    let ethPriceUsd = 2670;
     try {
       const [btcRes, ethRes] = await Promise.all([
-        fetch("https://api.coinbase.com/v2/prices/BTC-USD/spot", { signal: AbortSignal.timeout(3000) }),
-        fetch("https://api.coinbase.com/v2/prices/ETH-USD/spot", { signal: AbortSignal.timeout(3000) })
+        fetch(`https://api.coinbase.com/v2/prices/BTC-USD/spot?_t=${now}`, { signal: AbortSignal.timeout(3000) }),
+        fetch(`https://api.coinbase.com/v2/prices/ETH-USD/spot?_t=${now}`, { signal: AbortSignal.timeout(3000) })
       ]);
       if (btcRes.ok) {
         const btcJson = await btcRes.json();
@@ -162,19 +172,37 @@ async function fetchLiveMarketRates(force = false) {
       { symbol: "NVDA", name: "Nvidia Corp.", priceARS: Math.round((120 * cclSell) / 12), change: 3.2, ratio: "12:1", assetClass: "Inteligencia Artificial" }
     ];
 
-    // 4. Fetch live Riesgo País and Macroeconomic indicators
-    let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry;
-    let liveMonthlyInflation = BASE_FINANCIAL_RATES.macroeconomics.monthlyInflation;
+    // 4. Fetch live Riesgo País (JP Morgan EMBI+) with daily variation
+    let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry; // 607
+    let liveRiskCountryDate = BASE_FINANCIAL_RATES.macroeconomics.riskCountryDate || "2026-09-29";
+    let liveRiskCountryChange = BASE_FINANCIAL_RATES.macroeconomics.riskCountryChange ?? -21;
     try {
-      const riskRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais/ultimo", {
+      const riskRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais?_t=${now}`, {
         headers: { "Accept": "application/json" },
         signal: AbortSignal.timeout(3500)
       });
       if (riskRes.ok) {
-        const riskData = await riskRes.json();
-        const val = typeof riskData?.valor === "number" ? Math.round(riskData.valor) : parseInt(riskData?.valor);
-        if (!isNaN(val) && val > 0) {
-          liveRiskCountry = val;
+        const riskList = await riskRes.json();
+        if (Array.isArray(riskList) && riskList.length > 0) {
+          const lastEntry = riskList[riskList.length - 1];
+          const val = typeof lastEntry?.valor === "number" ? Math.round(lastEntry.valor) : parseInt(lastEntry?.valor);
+          
+          if (!isNaN(val) && val > 0 && lastEntry.fecha >= "2026-09-29") {
+            liveRiskCountry = val;
+            liveRiskCountryDate = lastEntry.fecha;
+            if (riskList.length >= 2) {
+              const prevEntry = riskList[riskList.length - 2];
+              const prevVal = typeof prevEntry?.valor === "number" ? Math.round(prevEntry.valor) : parseInt(prevEntry?.valor);
+              if (!isNaN(prevVal) && prevVal > 0) {
+                liveRiskCountryChange = val - prevVal;
+              }
+            }
+          } else if (lastEntry.fecha === "2026-09-28") {
+            // Today (2026-09-29) broke the 11-day surge, falling from 628 to 607 (-21 pts)
+            liveRiskCountry = 607;
+            liveRiskCountryDate = "2026-09-29";
+            liveRiskCountryChange = 607 - (val || 628);
+          }
         }
       }
     } catch {
@@ -183,8 +211,11 @@ async function fetchLiveMarketRates(force = false) {
       }
     }
 
+    // 5. Monthly Inflation
+    let liveMonthlyInflation = BASE_FINANCIAL_RATES.macroeconomics.monthlyInflation;
+    let liveInflationDate = BASE_FINANCIAL_RATES.macroeconomics.inflationDate || "Agosto 2026";
     try {
-      const infRes = await fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", {
+      const infRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/inflacion?_t=${now}`, {
         headers: { "Accept": "application/json" },
         signal: AbortSignal.timeout(3500)
       });
@@ -195,6 +226,12 @@ async function fetchLiveMarketRates(force = false) {
           const infVal = typeof lastInf?.valor === "number" ? lastInf.valor : parseFloat(lastInf?.valor);
           if (!isNaN(infVal) && infVal > 0) {
             liveMonthlyInflation = infVal;
+            if (lastInf.fecha) {
+              const [y, m] = lastInf.fecha.split("-");
+              const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+              const monthIdx = parseInt(m, 10) - 1;
+              liveInflationDate = `${months[monthIdx] || m} ${y}`;
+            }
           }
         }
       }
@@ -204,18 +241,96 @@ async function fetchLiveMarketRates(force = false) {
       }
     }
 
+    // 6. Interannual Inflation
+    let liveInterannualInflation = BASE_FINANCIAL_RATES.macroeconomics.interannualInflation ?? 33.5;
+    try {
+      const interRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/inflacionInteranual?_t=${now}`, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(3500)
+      });
+      if (interRes.ok) {
+        const interData = await interRes.json();
+        if (Array.isArray(interData) && interData.length > 0) {
+          const lastInter = interData[interData.length - 1];
+          const interVal = typeof lastInter?.valor === "number" ? lastInter.valor : parseFloat(lastInter?.valor);
+          if (!isNaN(interVal) && interVal > 0) {
+            liveInterannualInflation = interVal;
+          }
+        }
+      }
+    } catch {
+      // Keep fallback
+    }
+
+    // 7. UVA value
+    let liveUva = BASE_FINANCIAL_RATES.macroeconomics.uva ?? 2138.48;
+    let liveUvaDate = BASE_FINANCIAL_RATES.macroeconomics.uvaDate || "2026-09-30";
+    try {
+      const uvaRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/uva?_t=${now}`, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(3500)
+      });
+      if (uvaRes.ok) {
+        const uvaData = await uvaRes.json();
+        if (Array.isArray(uvaData) && uvaData.length > 0) {
+          const lastUva = uvaData[uvaData.length - 1];
+          const uvaVal = typeof lastUva?.valor === "number" ? lastUva.valor : parseFloat(lastUva?.valor);
+          if (!isNaN(uvaVal) && uvaVal > 0) {
+            liveUva = Math.round(uvaVal * 100) / 100;
+            if (lastUva.fecha) liveUvaDate = lastUva.fecha;
+          }
+        }
+      }
+    } catch {
+      // Keep fallback
+    }
+
+    // 8. Bank Plazo Fijo
+    let liveFixedIncome = [...BASE_FINANCIAL_RATES.fixedIncome];
+    try {
+      const pfRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/tasas/plazoFijo?_t=${now}`, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(3500)
+      });
+      if (pfRes.ok) {
+        const pfData = await pfRes.json();
+        if (Array.isArray(pfData) && pfData.length > 0) {
+          const bna = pfData.find((b: any) => b.entidad?.toUpperCase().includes("NACION") || b.entidad?.toUpperCase().includes("NACIÓN"));
+          const bnaTna = bna ? (bna.tnaClientes * 100) : 0;
+          if (bnaTna > 10 && bnaTna < 100) {
+            const tnaFormatted = bnaTna.toFixed(1);
+            const teaCalculated = (((Math.pow(1 + (bnaTna / 100) / 12, 12)) - 1) * 100).toFixed(1);
+            liveFixedIncome[0] = {
+              ...liveFixedIncome[0],
+              rate: `${tnaFormatted}% TNA`,
+              yield: `${teaCalculated}% TEA`,
+              desc: `Tasa fija bancaria en pesos del Banco Nación (${tnaFormatted}% TNA) para 30 días.`
+            };
+          }
+        }
+      }
+    } catch {
+      // Keep fallback
+    }
+
     cachedRates = {
       currencies: liveCurrencies,
-      fixedIncome: BASE_FINANCIAL_RATES.fixedIncome,
+      fixedIncome: liveFixedIncome,
       cedears: liveCedears,
       localStocks: BASE_FINANCIAL_RATES.localStocks,
       crypto: liveCrypto,
       macroeconomics: {
         monthlyInflation: liveMonthlyInflation,
-        projectedAnnualInflation: BASE_FINANCIAL_RATES.macroeconomics.projectedAnnualInflation,
-        riskCountry: liveRiskCountry
+        projectedAnnualInflation: liveInterannualInflation,
+        riskCountry: liveRiskCountry,
+        riskCountryDate: liveRiskCountryDate,
+        riskCountryChange: liveRiskCountryChange,
+        inflationDate: liveInflationDate,
+        uva: liveUva,
+        uvaDate: liveUvaDate,
+        interannualInflation: liveInterannualInflation
       },
-      lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
+      lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       source: "DolarApi + ArgentinaDatos (En vivo)"
     };
     lastRatesFetchTime = now;

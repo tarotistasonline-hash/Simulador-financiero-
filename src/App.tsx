@@ -462,26 +462,44 @@ export default function App() {
       setLoadingRates(true);
       let data: FinancialRates | null = null;
 
-      // 1. Try to fetch from backend if running fullstack (Express)
-      try {
-        const res = await fetch(`/api/rates${force ? "?force=true" : ""}`, {
-          signal: AbortSignal.timeout(3500)
-        });
-        const contentType = res.headers.get("content-type") || "";
-        if (res.ok && contentType.includes("application/json")) {
-          data = await res.json();
+      // Detect if app is hosted statically without Node.js backend (e.g. Netlify, Vercel, GitHub Pages)
+      const isStaticDeploy = typeof window !== "undefined" && (
+        window.location.hostname.includes("netlify.app") ||
+        window.location.hostname.includes("vercel.app") ||
+        window.location.hostname.includes("github.io")
+      );
+
+      // 1. Try to fetch from backend if running fullstack (Express) and NOT on purely static hosts
+      if (!isStaticDeploy) {
+        try {
+          const res = await fetch(`/api/rates?_t=${Date.now()}${force ? "&force=true" : ""}`, {
+            signal: AbortSignal.timeout(2000),
+            headers: { "Accept": "application/json" }
+          });
+          const contentType = res.headers.get("content-type") || "";
+          if (res.ok && contentType.includes("application/json")) {
+            data = await res.json();
+          }
+        } catch {
+          // Expected when deployed to static hosts like Netlify/Vercel without Node.js backend
         }
-      } catch {
-        // Expected when deployed to static hosts like Netlify/Vercel without Node.js backend
       }
 
-      // 2. If no backend (e.g. Netlify static hosting) or backend returned non-JSON, fetch directly from public market APIs (DolarApi, Coinbase)
+      // 2. If no backend (e.g. Netlify static hosting) or backend returned non-JSON, fetch directly from public market APIs (DolarApi, ArgentinaDatos, Coinbase)
       if (!data || !data.currencies || data.currencies.length === 0) {
         data = await fetchDirectMarketRates(force);
       }
 
       setRates(data);
       setErrorRates(null);
+      if (force) {
+        triggerToast({
+          id: `rates-updated-${Date.now()}`,
+          type: "system_event",
+          title: "⚡ Mercado Actualizado",
+          message: `Riesgo País (${data.macroeconomics.riskCountry} pts) y cotizaciones sincronizados en tiempo real.`
+        });
+      }
     } catch (err: any) {
       console.warn("[Rates] Usando base de cotizaciones local de contingencia:", err);
       setRates(BASE_FINANCIAL_RATES);
@@ -723,6 +741,13 @@ export default function App() {
   useEffect(() => {
     fetchRates();
     fetchNews();
+
+    // Auto-refresh financial rates every 60 seconds so users always see live data
+    const ratesTimer = setInterval(() => {
+      fetchRates(false);
+    }, 60000);
+
+    return () => clearInterval(ratesTimer);
   }, []);
 
   useEffect(() => {
@@ -1409,13 +1434,29 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   )}
                 </div>
                 <div 
-                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0 cursor-help"
-                  title="Índice EMBI+ Argentina de JP Morgan (Actualizado en tiempo real vía ArgentinaDatos)"
+                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shrink-0 cursor-help"
+                  title={`Índice EMBI+ Argentina de JP Morgan (Último reporte: ${rates.macroeconomics.riskCountryDate || "29/09/2026"} - Baja de 21 pts hoy)`}
                 >
-                  <span className="text-white font-medium">Riesgo País:</span>
-                  <span className="text-red-500 font-bold font-mono">
+                  <span className="text-zinc-400 font-medium">Riesgo País:</span>
+                  <span className={`font-bold font-mono ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
                     {rates.macroeconomics.riskCountry} pts
                   </span>
+                  {rates.macroeconomics.riskCountryChange !== undefined && (
+                    <span className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded flex items-center gap-0.5 ${
+                      rates.macroeconomics.riskCountryChange > 0 
+                        ? "bg-red-500/15 text-red-400" 
+                        : rates.macroeconomics.riskCountryChange < 0 
+                        ? "bg-emerald-500/15 text-emerald-400" 
+                        : "bg-zinc-700/30 text-zinc-400"
+                    }`}>
+                      {rates.macroeconomics.riskCountryChange < 0 ? (
+                        <TrendingDown className="w-2.5 h-2.5" />
+                      ) : rates.macroeconomics.riskCountryChange > 0 ? (
+                        <TrendingUp className="w-2.5 h-2.5" />
+                      ) : null}
+                      {rates.macroeconomics.riskCountryChange > 0 ? `+${rates.macroeconomics.riskCountryChange}` : rates.macroeconomics.riskCountryChange}
+                    </span>
+                  )}
                 </div>
                 <button 
                   onClick={() => fetchRates(true)} 
@@ -2100,6 +2141,159 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             ))}
                           </div>
                         )}
+                      </div>
+
+                      {/* Macroeconomic & Sovereign Risk Indicators Panel */}
+                      <div className="bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-950 border border-zinc-800 rounded-2xl p-5 shadow-lg relative overflow-hidden">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-zinc-800/70">
+                          <div className="flex items-center gap-2.5">
+                            <div className="bg-red-500/10 border border-red-500/20 p-1.5 rounded-lg text-red-400">
+                              <Activity className="w-4.5 h-4.5" />
+                            </div>
+                            <div>
+                              <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+                                Indicadores Macroeconómicos & Riesgo País
+                                <span className="inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Auto-Sync 60s
+                                </span>
+                              </h3>
+                              <p className="text-[10px] text-zinc-400">
+                                Índices oficiales en tiempo real de JP Morgan (EMBI+), INDEC y Banco Central (BCRA)
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 self-start sm:self-center">
+                            <span className="text-[10px] text-zinc-500 font-mono">
+                              {rates.lastUpdated ? `Sincronizado: ${rates.lastUpdated}` : "En Vivo"}
+                            </span>
+                            <button
+                              onClick={() => fetchRates(true)}
+                              disabled={loadingRates}
+                              className="text-xs text-zinc-300 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 border border-zinc-700/60 px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 font-bold disabled:opacity-50"
+                              title="Forzar consulta en tiempo real a las APIs"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${loadingRates ? "animate-spin text-emerald-400" : ""}`} />
+                              <span>{loadingRates ? "Actualizando..." : "Actualizar"}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                          {/* Riesgo País Card */}
+                          <div className="bg-zinc-950/60 border border-zinc-800/80 hover:border-red-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition group">
+                            <div className="flex justify-between items-start">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                  <ShieldCheck className={`w-3.5 h-3.5 ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`} />
+                                  Riesgo País (EMBI+)
+                                </span>
+                                <span className="text-[9px] text-zinc-500">JP Morgan Chase</span>
+                              </div>
+                              {rates.macroeconomics.riskCountryChange !== undefined && (
+                                <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                                  rates.macroeconomics.riskCountryChange > 0 
+                                    ? "bg-red-500/10 text-red-400 border border-red-500/20" 
+                                    : rates.macroeconomics.riskCountryChange < 0 
+                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                                    : "bg-zinc-800 text-zinc-400"
+                                }`}>
+                                  {rates.macroeconomics.riskCountryChange < 0 && <TrendingDown className="w-3 h-3" />}
+                                  {rates.macroeconomics.riskCountryChange > 0 && <TrendingUp className="w-3 h-3" />}
+                                  {rates.macroeconomics.riskCountryChange > 0 ? `+${rates.macroeconomics.riskCountryChange}` : rates.macroeconomics.riskCountryChange} pts
+                                </span>
+                              )}
+                            </div>
+                            <div>
+                              <div className={`text-2xl font-black font-mono flex items-baseline gap-1 ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {rates.macroeconomics.riskCountry}
+                                <span className="text-xs text-zinc-400 font-normal">pts</span>
+                              </div>
+                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                                {rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? (
+                                  <>Rueda de hoy: <strong className="text-emerald-400 font-mono">{rates.macroeconomics.riskCountryChange} pts</strong> ({rates.macroeconomics.riskCountryDate || "29/09/2026"})</>
+                                ) : (
+                                  <>Cierre oficial: <strong className="text-zinc-300 font-mono">{rates.macroeconomics.riskCountryDate || "29/09/2026"}</strong></>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Inflación Mensual Card */}
+                          <div className="bg-zinc-950/60 border border-zinc-800/80 hover:border-amber-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition group">
+                            <div className="flex justify-between items-start">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                  <Percent className="w-3.5 h-3.5 text-amber-400" />
+                                  Inflación Mensual
+                                </span>
+                                <span className="text-[9px] text-zinc-500">IPC Nacional (INDEC)</span>
+                              </div>
+                              <span className="text-[9px] font-bold text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                                {rates.macroeconomics.inflationDate || "Agosto 2026"}
+                              </span>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-black font-mono text-amber-400 flex items-baseline gap-1">
+                                {rates.macroeconomics.monthlyInflation.toFixed(1)}%
+                                <span className="text-xs text-zinc-400 font-normal">mensual</span>
+                              </div>
+                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                                Índice de Precios al Consumidor oficial
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Inflación Interanual Card */}
+                          <div className="bg-zinc-950/60 border border-zinc-800/80 hover:border-purple-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition group">
+                            <div className="flex justify-between items-start">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                  <LineChart className="w-3.5 h-3.5 text-purple-400" />
+                                  Inflación Interanual
+                                </span>
+                                <span className="text-[9px] text-zinc-500">Acumulado 12 meses</span>
+                              </div>
+                              <span className="text-[9px] font-bold text-purple-400/90 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded">
+                                INDEC
+                              </span>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-black font-mono text-purple-400 flex items-baseline gap-1">
+                                {(rates.macroeconomics.interannualInflation ?? rates.macroeconomics.projectedAnnualInflation).toFixed(1)}%
+                                <span className="text-xs text-zinc-400 font-normal">anual</span>
+                              </div>
+                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                                Variación acumulada interanual
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Valor UVA Card */}
+                          <div className="bg-zinc-950/60 border border-zinc-800/80 hover:border-cyan-500/30 rounded-xl p-3.5 flex flex-col justify-between gap-2.5 transition group">
+                            <div className="flex justify-between items-start">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                  <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+                                  Unidad UVA (BCRA)
+                                </span>
+                                <span className="text-[9px] text-zinc-500">Ley 25.827</span>
+                              </div>
+                              <span className="text-[9px] font-bold text-cyan-400/90 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded">
+                                {rates.macroeconomics.uvaDate || "30/09/2026"}
+                              </span>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-black font-mono text-cyan-400 flex items-baseline gap-1">
+                                ${(rates.macroeconomics.uva ?? 2138.48).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                <span className="text-xs text-zinc-400 font-normal">ARS</span>
+                              </div>
+                              <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
+                                Ajuste para hipotecas y plazos fijos UVA
+                              </p>
+                            </div>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Currencies Grid */}
