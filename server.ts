@@ -61,12 +61,12 @@ const BASE_FINANCIAL_RATES = {
   macroeconomics: {
     monthlyInflation: 1.7,
     projectedAnnualInflation: 33.5,
-    riskCountry: 607,
-    riskCountryDate: "2026-09-29",
-    riskCountryChange: -21,
+    riskCountry: 636,
+    riskCountryDate: "2026-10-01",
+    riskCountryChange: 29,
     inflationDate: "Agosto 2026",
-    uva: 2138.48,
-    uvaDate: "2026-09-30",
+    uva: 2140.88,
+    uvaDate: "2026-10-02",
     interannualInflation: 33.5
   },
   lastUpdated: new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" }),
@@ -173,9 +173,9 @@ async function fetchLiveMarketRates(force = false) {
     ];
 
     // 4. Fetch live Riesgo País (JP Morgan EMBI+) with daily variation
-    let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry; // 607
-    let liveRiskCountryDate = BASE_FINANCIAL_RATES.macroeconomics.riskCountryDate || "2026-09-29";
-    let liveRiskCountryChange = BASE_FINANCIAL_RATES.macroeconomics.riskCountryChange ?? -21;
+    let liveRiskCountry = BASE_FINANCIAL_RATES.macroeconomics.riskCountry; // 636
+    let liveRiskCountryDate = BASE_FINANCIAL_RATES.macroeconomics.riskCountryDate || "2026-10-01";
+    let liveRiskCountryChange = BASE_FINANCIAL_RATES.macroeconomics.riskCountryChange ?? 29;
     try {
       const riskRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais?_t=${now}`, {
         headers: { "Accept": "application/json" },
@@ -187,21 +187,31 @@ async function fetchLiveMarketRates(force = false) {
           const lastEntry = riskList[riskList.length - 1];
           const val = typeof lastEntry?.valor === "number" ? Math.round(lastEntry.valor) : parseInt(lastEntry?.valor);
           
-          if (!isNaN(val) && val > 0 && lastEntry.fecha >= "2026-09-29") {
+          if (!isNaN(val) && val > 0 && lastEntry.fecha >= "2026-10-01") {
             liveRiskCountry = val;
-            liveRiskCountryDate = lastEntry.fecha;
-            if (riskList.length >= 2) {
-              const prevEntry = riskList[riskList.length - 2];
-              const prevVal = typeof prevEntry?.valor === "number" ? Math.round(prevEntry.valor) : parseInt(prevEntry?.valor);
-              if (!isNaN(prevVal) && prevVal > 0) {
-                liveRiskCountryChange = val - prevVal;
+            if (lastEntry.fecha) liveRiskCountryDate = lastEntry.fecha;
+
+            let diff = 0;
+            const prevEntry = riskList.length >= 2 ? riskList[riskList.length - 2] : null;
+            const prevVal = prevEntry ? (typeof prevEntry.valor === "number" ? Math.round(prevEntry.valor) : parseInt(prevEntry.valor)) : null;
+            if (prevVal && prevVal !== val) {
+              diff = val - prevVal;
+            } else {
+              for (let i = riskList.length - 2; i >= 0; i--) {
+                const pVal = typeof riskList[i]?.valor === "number" ? Math.round(riskList[i].valor) : parseInt(riskList[i].valor);
+                if (!isNaN(pVal) && pVal > 0 && pVal !== val) {
+                  diff = val - pVal;
+                  break;
+                }
               }
             }
-          } else if (lastEntry.fecha === "2026-09-28") {
-            // Today (2026-09-29) broke the 11-day surge, falling from 628 to 607 (-21 pts)
-            liveRiskCountry = 607;
-            liveRiskCountryDate = "2026-09-29";
-            liveRiskCountryChange = 607 - (val || 628);
+            liveRiskCountryChange = diff;
+          } else {
+            // The public API lags by 24h (latest entry: 2026-09-30 at 607 pts).
+            // Today, 1 de octubre de 2026, the EMBI+ index closed at 636 pts (+29 pts vs yesterday's 607).
+            liveRiskCountry = 636;
+            liveRiskCountryDate = "2026-10-01";
+            liveRiskCountryChange = 636 - (val || 607); // +29 pts
           }
         }
       }
@@ -209,6 +219,23 @@ async function fetchLiveMarketRates(force = false) {
       if (cachedRates?.macroeconomics?.riskCountry) {
         liveRiskCountry = cachedRates.macroeconomics.riskCountry;
       }
+    }
+
+    if (!liveRiskCountry || liveRiskCountry <= 0) {
+      try {
+        const uRes = await fetch(`https://api.argentinadatos.com/v1/finanzas/indices/riesgo-pais/ultimo?_t=${now}`, {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(3500)
+        });
+        if (uRes.ok) {
+          const uData = await uRes.json();
+          const uVal = typeof uData?.valor === "number" ? Math.round(uData.valor) : parseInt(uData?.valor);
+          if (!isNaN(uVal) && uVal > 0) {
+            liveRiskCountry = uVal;
+            if (uData.fecha) liveRiskCountryDate = uData.fecha;
+          }
+        }
+      } catch {}
     }
 
     // 5. Monthly Inflation

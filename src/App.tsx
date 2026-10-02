@@ -42,7 +42,10 @@ import {
   RotateCcw,
   Smartphone,
   Laptop,
-  Bot
+  Bot,
+  Edit3,
+  Check,
+  X
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -109,6 +112,17 @@ const FALLBACK_PIE_COLORS = [
   "#06b6d4", "#f97316", "#a855f7", "#eab308", "#14b8a6"
 ];
 
+const formatDateAR = (isoStr?: string) => {
+  if (!isoStr) return "Hoy";
+  if (isoStr.includes("-")) {
+    const parts = isoStr.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+  }
+  return isoStr;
+};
+
 export default function App() {
   // Global States
   const [rates, setRates] = useState<FinancialRates | null>(null);
@@ -130,6 +144,48 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<"rates" | "simulator" | "calculator" | "advisor">("rates");
   
+  // Custom Riesgo Pais state (allows instant override if public API lags)
+  const [customRiskCountry, setCustomRiskCountry] = useState<number | null>(() => {
+    try {
+      const saved = localStorage.getItem("custom_risk_country");
+      return saved ? Number(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isEditingRiskCountry, setIsEditingRiskCountry] = useState<boolean>(false);
+  const [riskInputVal, setRiskInputVal] = useState<string>("");
+
+  const handleSaveRiskCountry = (val: number) => {
+    if (isNaN(val) || val <= 0) return;
+    setCustomRiskCountry(val);
+    try {
+      localStorage.setItem("custom_risk_country", val.toString());
+    } catch {}
+    setIsEditingRiskCountry(false);
+    triggerToast({
+      id: `risk-custom-${Date.now()}`,
+      type: "system_event",
+      title: "⚡ Riesgo País Ajustado",
+      message: `Riesgo País fijado en ${val} pts (${val - 607 > 0 ? '+' : ''}${val - 607} pts vs 607 de ayer).`
+    });
+  };
+
+  const handleResetRiskCountry = () => {
+    setCustomRiskCountry(null);
+    try {
+      localStorage.removeItem("custom_risk_country");
+    } catch {}
+    setIsEditingRiskCountry(false);
+    fetchRates(true);
+    triggerToast({
+      id: `risk-reset-${Date.now()}`,
+      type: "system_event",
+      title: "🔄 Sincronización Automática",
+      message: "Riesgo País restablecido a la cotización oficial de mercado."
+    });
+  };
+
   // Tab-specific states
   const [cedearSearch, setCedearSearch] = useState<string>("");
   const [simPeriod, setSimPeriod] = useState<number>(12); // months
@@ -473,7 +529,7 @@ export default function App() {
       if (!isStaticDeploy) {
         try {
           const res = await fetch(`/api/rates?_t=${Date.now()}${force ? "&force=true" : ""}`, {
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(3500),
             headers: { "Accept": "application/json" }
           });
           const contentType = res.headers.get("content-type") || "";
@@ -493,11 +549,19 @@ export default function App() {
       setRates(data);
       setErrorRates(null);
       if (force) {
+        const changeStr = data.macroeconomics.riskCountryChange !== undefined
+          ? data.macroeconomics.riskCountryChange < 0
+            ? ` (Baja de ${Math.abs(data.macroeconomics.riskCountryChange)} pts)`
+            : data.macroeconomics.riskCountryChange > 0
+            ? ` (+${data.macroeconomics.riskCountryChange} pts)`
+            : " (Sin cambios)"
+          : "";
+
         triggerToast({
           id: `rates-updated-${Date.now()}`,
           type: "system_event",
           title: "⚡ Mercado Actualizado",
-          message: `Riesgo País (${data.macroeconomics.riskCountry} pts) y cotizaciones sincronizados en tiempo real.`
+          message: `Riesgo País sincronizado en ${data.macroeconomics.riskCountry} pts${changeStr}. Cotizaciones al día.`
         });
       }
     } catch (err: any) {
@@ -1373,6 +1437,18 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
     handleSendMessage(query);
   };
 
+  const displayRiskCountry = customRiskCountry !== null 
+    ? customRiskCountry 
+    : rates?.macroeconomics?.riskCountry ?? 636;
+
+  const displayRiskChange = customRiskCountry !== null
+    ? (customRiskCountry - 607)
+    : rates?.macroeconomics?.riskCountryChange ?? 29;
+
+  const displayRiskDate = customRiskCountry !== null
+    ? "01/10/2026"
+    : formatDateAR(rates?.macroeconomics?.riskCountryDate || "2026-10-01");
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans flex flex-col antialiased selection:bg-emerald-500/30 selection:text-emerald-300">
       
@@ -1434,29 +1510,49 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   )}
                 </div>
                 <div 
-                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shrink-0 cursor-help"
-                  title={`Índice EMBI+ Argentina de JP Morgan (Último reporte: ${rates.macroeconomics.riskCountryDate || "29/09/2026"} - Baja de 21 pts hoy)`}
+                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shrink-0"
+                  title={`Índice EMBI+ Argentina de JP Morgan (Medición al ${displayRiskDate}: ${displayRiskCountry} pts)`}
                 >
                   <span className="text-zinc-400 font-medium">Riesgo País:</span>
-                  <span className={`font-bold font-mono ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    {rates.macroeconomics.riskCountry} pts
+                  <span className={`font-bold font-mono ${displayRiskChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {displayRiskCountry} pts
                   </span>
-                  {rates.macroeconomics.riskCountryChange !== undefined && (
+                  {displayRiskChange !== undefined && (
                     <span className={`text-[9px] font-mono font-bold px-1 py-0.5 rounded flex items-center gap-0.5 ${
-                      rates.macroeconomics.riskCountryChange > 0 
+                      displayRiskChange > 0 
                         ? "bg-red-500/15 text-red-400" 
-                        : rates.macroeconomics.riskCountryChange < 0 
+                        : displayRiskChange < 0 
                         ? "bg-emerald-500/15 text-emerald-400" 
                         : "bg-zinc-700/30 text-zinc-400"
                     }`}>
-                      {rates.macroeconomics.riskCountryChange < 0 ? (
+                      {displayRiskChange < 0 ? (
                         <TrendingDown className="w-2.5 h-2.5" />
-                      ) : rates.macroeconomics.riskCountryChange > 0 ? (
+                      ) : displayRiskChange > 0 ? (
                         <TrendingUp className="w-2.5 h-2.5" />
                       ) : null}
-                      {rates.macroeconomics.riskCountryChange > 0 ? `+${rates.macroeconomics.riskCountryChange}` : rates.macroeconomics.riskCountryChange}
+                      {displayRiskChange > 0 ? `+${displayRiskChange}` : displayRiskChange}
                     </span>
                   )}
+                  {customRiskCountry !== null && (
+                    <button
+                      onClick={handleResetRiskCountry}
+                      className="text-[9px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold uppercase flex items-center gap-1 transition"
+                      title="Fijado manualmente. Clic para volver a cotización automática de la API"
+                    >
+                      <RotateCcw className="w-2.5 h-2.5" />
+                      Auto
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setIsEditingRiskCountry(true);
+                      setRiskInputVal(displayRiskCountry.toString());
+                    }}
+                    className="p-1 text-zinc-400 hover:text-amber-400 hover:bg-zinc-700/60 rounded-md transition ml-0.5 flex items-center gap-1"
+                    title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz)"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                  </button>
                 </div>
                 <button 
                   onClick={() => fetchRates(true)} 
@@ -2185,36 +2281,73 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                             <div className="flex justify-between items-start">
                               <div className="flex flex-col">
                                 <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                                  <ShieldCheck className={`w-3.5 h-3.5 ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`} />
+                                  <ShieldCheck className={`w-3.5 h-3.5 ${displayRiskChange < 0 ? "text-emerald-400" : "text-red-400"}`} />
                                   Riesgo País (EMBI+)
                                 </span>
-                                <span className="text-[9px] text-zinc-500">JP Morgan Chase</span>
-                              </div>
-                              {rates.macroeconomics.riskCountryChange !== undefined && (
-                                <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
-                                  rates.macroeconomics.riskCountryChange > 0 
-                                    ? "bg-red-500/10 text-red-400 border border-red-500/20" 
-                                    : rates.macroeconomics.riskCountryChange < 0 
-                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                                    : "bg-zinc-800 text-zinc-400"
-                                }`}>
-                                  {rates.macroeconomics.riskCountryChange < 0 && <TrendingDown className="w-3 h-3" />}
-                                  {rates.macroeconomics.riskCountryChange > 0 && <TrendingUp className="w-3 h-3" />}
-                                  {rates.macroeconomics.riskCountryChange > 0 ? `+${rates.macroeconomics.riskCountryChange}` : rates.macroeconomics.riskCountryChange} pts
+                                <span className="text-[9px] text-zinc-500 flex items-center gap-1.5">
+                                  JP Morgan Chase
+                                  {customRiskCountry !== null && (
+                                    <span className="text-[8px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 rounded font-semibold uppercase">
+                                      Manual
+                                    </span>
+                                  )}
                                 </span>
-                              )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {customRiskCountry !== null ? (
+                                  <button
+                                    onClick={handleResetRiskCountry}
+                                    className="text-[10px] text-amber-300 hover:text-white bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-lg flex items-center gap-1 font-bold transition shadow-sm"
+                                    title="Modo Manual activo. Clic para volver a cotización automática de la API"
+                                  >
+                                    <RotateCcw className="w-3 h-3 text-amber-400" />
+                                    <span>Modo: Auto</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[9px] text-zinc-500 bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded font-mono">
+                                    Auto
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    setIsEditingRiskCountry(true);
+                                    setRiskInputVal(displayRiskCountry.toString());
+                                  }}
+                                  className="text-[10px] font-semibold text-zinc-200 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-2 py-0.5 rounded-lg flex items-center gap-1 transition shadow-sm"
+                                  title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz)"
+                                >
+                                  <Edit3 className="w-3 h-3 text-amber-400" />
+                                  <span>Editar</span>
+                                </button>
+                                {displayRiskChange !== undefined && (
+                                  <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                                    displayRiskChange > 0 
+                                      ? "bg-red-500/10 text-red-400 border border-red-500/20" 
+                                      : displayRiskChange < 0 
+                                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                                      : "bg-zinc-800 text-zinc-400"
+                                  }`}>
+                                    {displayRiskChange < 0 && <TrendingDown className="w-3 h-3" />}
+                                    {displayRiskChange > 0 && <TrendingUp className="w-3 h-3" />}
+                                    {displayRiskChange > 0 ? `+${displayRiskChange}` : displayRiskChange} pts
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div>
-                              <div className={`text-2xl font-black font-mono flex items-baseline gap-1 ${rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                {rates.macroeconomics.riskCountry}
+                              <div className={`text-2xl font-black font-mono flex items-baseline gap-1 ${displayRiskChange < 0 ? "text-emerald-400" : "text-red-400"}`}>
+                                {displayRiskCountry}
                                 <span className="text-xs text-zinc-400 font-normal">pts</span>
                               </div>
                               <p className="text-[10px] text-zinc-400 mt-1 line-clamp-1">
-                                {rates.macroeconomics.riskCountryChange && rates.macroeconomics.riskCountryChange < 0 ? (
-                                  <>Rueda de hoy: <strong className="text-emerald-400 font-mono">{rates.macroeconomics.riskCountryChange} pts</strong> ({rates.macroeconomics.riskCountryDate || "29/09/2026"})</>
+                                {displayRiskChange < 0 ? (
+                                  <>Baja de hoy: <strong className="text-emerald-400 font-mono">{displayRiskChange} pts</strong> ({displayRiskDate})</>
+                                ) : displayRiskChange > 0 ? (
+                                  <>Suba de hoy: <strong className="text-red-400 font-mono">+{displayRiskChange} pts</strong> ({displayRiskDate})</>
                                 ) : (
-                                  <>Cierre oficial: <strong className="text-zinc-300 font-mono">{rates.macroeconomics.riskCountryDate || "29/09/2026"}</strong></>
+                                  <>Cierre oficial: <strong className="text-zinc-300 font-mono">{displayRiskDate}</strong></>
                                 )}
+                                {customRiskCountry !== null && <span className="ml-1 text-[9px] text-amber-400 font-bold">(Personalizado)</span>}
                               </p>
                             </div>
                           </div>
@@ -4364,6 +4497,93 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
           ))}
         </AnimatePresence>
       </div>
+
+      {/* Riesgo Pais Adjustment Modal */}
+      {isEditingRiskCountry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl max-w-sm w-full p-5 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
+            <button 
+              onClick={() => setIsEditingRiskCountry(false)}
+              className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition"
+              title="Cerrar"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="p-2 bg-amber-500/10 border border-amber-500/25 rounded-xl text-amber-400">
+                <Edit3 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">Ajustar Riesgo País</h3>
+                <p className="text-[11px] text-zinc-400">EMBI+ Argentina (JP Morgan)</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300 mb-3 leading-relaxed">
+              Las APIs públicas a veces demoran 24h en cargar el cierre. Podés ingresar manualmente el valor que veas en tiempo real:
+            </p>
+
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const parsed = parseInt(riskInputVal, 10);
+              if (!isNaN(parsed) && parsed > 0) handleSaveRiskCountry(parsed);
+            }}>
+              <div className="relative mb-3">
+                <input
+                  type="number"
+                  autoFocus
+                  value={riskInputVal}
+                  onChange={(e) => setRiskInputVal(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-700 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xl font-mono text-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  placeholder="636"
+                />
+                <span className="absolute right-3.5 top-3.5 text-xs text-zinc-400 font-mono">pts</span>
+              </div>
+
+              {/* Quick preset buttons */}
+              <div className="flex flex-wrap items-center gap-1.5 mb-4">
+                <span className="text-[10px] text-zinc-400">Accesos directos:</span>
+                <button
+                  type="button"
+                  onClick={() => setRiskInputVal("636")}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "636" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
+                >
+                  636 (Hoy 01/10)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRiskInputVal("607")}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "607" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
+                >
+                  607 (Ayer 30/09)
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  className="flex-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold py-2 rounded-xl text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/10 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  Guardar Cotización
+                </button>
+                {customRiskCountry !== null && (
+                  <button
+                    type="button"
+                    onClick={handleResetRiskCountry}
+                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold py-2 px-3 rounded-xl text-xs transition flex items-center gap-1 border border-zinc-700 cursor-pointer"
+                    title="Restablecer a sincronización automática de la API"
+                  >
+                    <RotateCcw className="w-3 h-3 text-amber-400" />
+                    Auto
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Floating Quick Action Button for Asesor Invert-Play */}
       {activeTab !== "advisor" && (
