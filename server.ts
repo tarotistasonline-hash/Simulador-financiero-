@@ -848,13 +848,20 @@ let newsCache: CachedNews | null = null;
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
 
 // API Endpoint to get real-time Argentine financial news using Google Search grounding
-app.get("/api/news", async (req, res) => {
+function withTimeout<T>(promise: Promise<T>, ms = 3500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("Timeout")), ms))
+  ]);
+}
+
+app.get("/api/news", async (_req, res) => {
   try {
     const now = Date.now();
-    
+
     // Check general Chat Circuit Breaker first - if active, serve cache or fallback immediately
     if (now < chatCircuitBreakerActiveUntil) {
-      console.log(`[Circuit Breaker Active] General chat limits reached. Serving news from cache/fallback.`);
+      console.log(`[Status] Serving news from cache.`);
       if (newsCache) {
         return res.json(newsCache.data);
       }
@@ -877,34 +884,31 @@ app.get("/api/news", async (req, res) => {
     if (canUseSearchGrounding) {
       try {
         console.log("[Cache Miss] Fetching live news from Gemini with Google Search grounding...");
-        // Tier 1: Try to fetch live news with Google Search grounding
-        const response = await ai.models.generateContent({
+        // Tier 1: Try to fetch live news with Google Search grounding with 3.5s timeout
+        const response = await withTimeout(ai.models.generateContent({
           model: "gemini-2.5-flash",
-          contents: "Busca las 3 noticias financieras más recientes e importantes de Argentina hoy (dólar, inflación, plazo fijo, CEDEARs, acciones o Banco Central). Buscá en internet las noticias más frescas e importantes de las últimas 24-48 horas. Devuelve estrictamente un arreglo JSON de exactamente 3 elements con título, resumen, url de origen real (obtenida del buscador de Google Search), fuente y fecha aproximada.",
+          contents: "Busca las 3 noticias financieras más recientes e importantes de Argentina hoy (dólar, inflación, plazo fijo, CEDEARs, acciones o Banco Central). Buscá en internet las noticias más frescas e importantes de las últimas 24-48 horas. Devuelve estrictamente un arreglo JSON de exactamente 3 elementos con las propiedades: title, summary, url (de origen real obtenida de los resultados de búsqueda), source y date. Responde ÚNICAMENTE con el bloque JSON sin bloques de texto fuera del JSON.",
           config: {
-            tools: [{ googleSearch: {} }],
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING, description: "Título breve y atractivo de la noticia financiera" },
-                  summary: { type: Type.STRING, description: "Resumen conciso de 1-2 oraciones explicando el impacto o novedad" },
-                  url: { type: Type.STRING, description: "URL de origen real de la noticia obtenida de los resultados de búsqueda de Google" },
-                  source: { type: Type.STRING, description: "Nombre del medio informativo, por ejemplo: El Cronista, Ámbito, Infobae, Clarín, La Nación, etc." },
-                  date: { type: Type.STRING, description: "Fecha amigable, por ejemplo: Hoy, Ayer, o la fecha de publicación" }
-                },
-                required: ["title", "summary", "url", "source", "date"]
-              }
-            }
+            tools: [{ googleSearch: {} }]
           }
-        });
+        }), 3500);
 
         if (response && response.text) {
-          const news = JSON.parse(response.text.trim());
+          let cleaned = response.text.trim();
+          if (cleaned.startsWith("```json")) {
+            cleaned = cleaned.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+          } else if (cleaned.startsWith("```")) {
+            cleaned = cleaned.replace(/^```\s*/, "").replace(/\s*```$/, "");
+          }
+          const news = JSON.parse(cleaned);
           if (Array.isArray(news) && news.length > 0) {
-            const formattedNews = news.slice(0, 3);
+            const formattedNews = news.slice(0, 3).map((item: any) => ({
+              title: String(item.title || "Actualidad Financiera"),
+              summary: String(item.summary || ""),
+              url: String(item.url || "https://www.cronista.com/finanzas-mercados/"),
+              source: String(item.source || "Mercado"),
+              date: String(item.date || "Hoy")
+            }));
             // Save to cache
             newsCache = {
               data: formattedNews,
@@ -925,7 +929,7 @@ app.get("/api/news", async (req, res) => {
     // Tier 2: Try standard model generation (without search grounding) using the model's financial training
     try {
       console.log("[Tier 2 Attempt] Fetching standard model generated news...");
-      const fallbackAiResponse = await ai.models.generateContent({
+      const fallbackAiResponse = await withTimeout(ai.models.generateContent({
         model: "gemini-2.5-flash",
         contents: "Genera las 3 noticias financieras más importantes y realistas de Argentina hoy (vinculadas a la cotización del dólar, inflación, CEDEARs, plazos fijos o Banco Central). Deben sonar sumamente actualizadas e incorporar datos realistas del panorama macroeconómico argentino actual. Devuelve estrictamente un arreglo JSON de exactamente 3 elementos con título, resumen, una URL verosímil de un medio argentino especializado (ej: cronista.com o ambito.com), el nombre del medio como fuente y la fecha 'Hoy' o 'Ayer'.",
         config: {
@@ -945,7 +949,7 @@ app.get("/api/news", async (req, res) => {
             }
           }
         }
-      });
+      }), 3500);
 
       if (fallbackAiResponse && fallbackAiResponse.text) {
         const fallbackNews = JSON.parse(fallbackAiResponse.text.trim());
@@ -966,9 +970,9 @@ app.get("/api/news", async (req, res) => {
     }
 
     // Tier 3: If both AI tiers fail or hit quota limits:
-    // Try to return the stale cache if available (even if expired, it's better than returning static fallbacks)
+    // Try to return the cached news if available
     if (newsCache) {
-      console.log("[Cache Recovery] Serving stale cache as safety net after AI errors.");
+      console.log("[Cache] Serving cached news data.");
       return res.json(newsCache.data);
     }
 

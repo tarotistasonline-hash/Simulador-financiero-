@@ -44,6 +44,7 @@ import {
   Laptop,
   Bot,
   Edit3,
+  Pencil,
   Check,
   X
 } from "lucide-react";
@@ -1510,7 +1511,7 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   )}
                 </div>
                 <div 
-                  className="bg-zinc-800/60 border border-zinc-700/50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shrink-0"
+                  className="bg-zinc-800/80 border border-zinc-700 px-2.5 py-1 rounded-lg flex items-center gap-2 shrink-0 shadow-xs"
                   title={`Índice EMBI+ Argentina de JP Morgan (Medición al ${displayRiskDate}: ${displayRiskCountry} pts)`}
                 >
                   <span className="text-zinc-400 font-medium">Riesgo País:</span>
@@ -1533,26 +1534,39 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                       {displayRiskChange > 0 ? `+${displayRiskChange}` : displayRiskChange}
                     </span>
                   )}
-                  {customRiskCountry !== null && (
-                    <button
-                      onClick={handleResetRiskCountry}
-                      className="text-[9px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold uppercase flex items-center gap-1 transition"
-                      title="Fijado manualmente. Clic para volver a cotización automática de la API"
-                    >
-                      <RotateCcw className="w-2.5 h-2.5" />
-                      Auto
-                    </button>
-                  )}
+
+                  {/* Botón Lápiz destacado en la barra superior */}
                   <button
                     onClick={() => {
                       setIsEditingRiskCountry(true);
                       setRiskInputVal(displayRiskCountry.toString());
                     }}
-                    className="p-1 text-zinc-400 hover:text-amber-400 hover:bg-zinc-700/60 rounded-md transition ml-0.5 flex items-center gap-1"
-                    title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz)"
+                    className="px-2 py-0.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white border border-amber-500/40 rounded-md text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                    title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz ✏️)"
                   >
-                    <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                    <Pencil className="w-3 h-3 text-amber-400" />
+                    <span>Editar</span>
                   </button>
+
+                  {/* Botón o indicador Auto / Manual */}
+                  {customRiskCountry !== null ? (
+                    <button
+                      onClick={handleResetRiskCountry}
+                      className="px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-white border border-emerald-500/40 rounded-md text-[10px] font-bold flex items-center gap-1 transition cursor-pointer shadow-xs"
+                      title="Actualmente en modo manual. Clic para volver a cotización Automática de la API"
+                    >
+                      <RotateCcw className="w-2.5 h-2.5 text-emerald-400" />
+                      <span>Volver a Auto</span>
+                    </button>
+                  ) : (
+                    <span 
+                      className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-md font-bold font-mono flex items-center gap-1"
+                      title="Modo Automático activo: sincronizado con la API oficial"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Auto</span>
+                    </span>
+                  )}
                 </div>
                 <button 
                   onClick={() => fetchRates(true)} 
@@ -2293,34 +2307,42 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                                   )}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {/* Botón / Indicador Auto */}
                                 {customRiskCountry !== null ? (
                                   <button
                                     onClick={handleResetRiskCountry}
-                                    className="text-[10px] text-amber-300 hover:text-white bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-lg flex items-center gap-1 font-bold transition shadow-sm"
-                                    title="Modo Manual activo. Clic para volver a cotización automática de la API"
+                                    className="text-xs font-bold text-emerald-300 hover:text-white bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                                    title="Modo Manual activo. Clic para volver a cotización Automática de la API"
                                   >
-                                    <RotateCcw className="w-3 h-3 text-amber-400" />
-                                    <span>Modo: Auto</span>
+                                    <RotateCcw className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Volver a Auto</span>
                                   </button>
                                 ) : (
-                                  <span className="text-[9px] text-zinc-500 bg-zinc-900 border border-zinc-800 px-1.5 py-0.5 rounded font-mono">
-                                    Auto
+                                  <span 
+                                    className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-lg flex items-center gap-1.5"
+                                    title="Modo Automático activo: cotización oficial sincronizada con la API"
+                                  >
+                                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                                    <span>Auto</span>
                                   </span>
                                 )}
+
+                                {/* Botón Lápiz (Editar) */}
                                 <button
                                   onClick={() => {
                                     setIsEditingRiskCountry(true);
                                     setRiskInputVal(displayRiskCountry.toString());
                                   }}
-                                  className="text-[10px] font-semibold text-zinc-200 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 px-2 py-0.5 rounded-lg flex items-center gap-1 transition shadow-sm"
-                                  title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz)"
+                                  className="text-xs font-bold text-amber-300 hover:text-white bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                                  title="Ajustar manualmente cotización de Riesgo País (Icono de lápiz ✏️)"
                                 >
-                                  <Edit3 className="w-3 h-3 text-amber-400" />
-                                  <span>Editar</span>
+                                  <Pencil className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>✏️ Lápiz</span>
                                 </button>
+
                                 {displayRiskChange !== undefined && (
-                                  <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                                  <span className={`text-[10px] font-bold font-mono px-2 py-1 rounded-lg flex items-center gap-1 ${
                                     displayRiskChange > 0 
                                       ? "bg-red-500/10 text-red-400 border border-red-500/20" 
                                       : displayRiskChange < 0 
@@ -4512,16 +4534,19 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
 
             <div className="flex items-center gap-2.5 mb-3">
               <div className="p-2 bg-amber-500/10 border border-amber-500/25 rounded-xl text-amber-400">
-                <Edit3 className="w-5 h-5" />
+                <Pencil className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Ajustar Riesgo País</h3>
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>Ajustar Riesgo País</span>
+                  <span className="text-amber-400 font-normal text-xs">(Lápiz ✏️)</span>
+                </h3>
                 <p className="text-[11px] text-zinc-400">EMBI+ Argentina (JP Morgan)</p>
               </div>
             </div>
 
             <p className="text-xs text-zinc-300 mb-3 leading-relaxed">
-              Las APIs públicas a veces demoran 24h en cargar el cierre. Podés ingresar manualmente el valor que veas en tiempo real:
+              Podés ingresar manualmente cualquier valor (por ejemplo si la API pública tiene demora de 24h) o volver al modo Automático sincronizado con la API:
             </p>
 
             <form onSubmit={(e) => {
@@ -4547,16 +4572,16 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                 <button
                   type="button"
                   onClick={() => setRiskInputVal("636")}
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "636" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "636" ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
                 >
-                  636 (Hoy 01/10)
+                  636 pts (Cierre oficial Hoy 01/10)
                 </button>
                 <button
                   type="button"
                   onClick={() => setRiskInputVal("607")}
-                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "607" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
+                  className={`text-[11px] font-mono px-2 py-0.5 rounded border transition ${riskInputVal === "607" ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold" : "bg-zinc-800 text-zinc-300 hover:text-white border-zinc-700"}`}
                 >
-                  607 (Ayer 30/09)
+                  607 pts (Cierre anterior 30/09)
                 </button>
               </div>
 
@@ -4568,17 +4593,15 @@ Escríbeme o selecciona una de las preguntas rápidas abajo.`;
                   <Check className="w-3.5 h-3.5" />
                   Guardar Cotización
                 </button>
-                {customRiskCountry !== null && (
-                  <button
-                    type="button"
-                    onClick={handleResetRiskCountry}
-                    className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-bold py-2 px-3 rounded-xl text-xs transition flex items-center gap-1 border border-zinc-700 cursor-pointer"
-                    title="Restablecer a sincronización automática de la API"
-                  >
-                    <RotateCcw className="w-3 h-3 text-amber-400" />
-                    Auto
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleResetRiskCountry}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-emerald-400 hover:text-emerald-300 font-bold py-2 px-3 rounded-xl text-xs transition flex items-center gap-1.5 border border-zinc-700 cursor-pointer"
+                  title="Restablecer a sincronización automática de la API"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Modo Auto</span>
+                </button>
               </div>
             </form>
           </div>
